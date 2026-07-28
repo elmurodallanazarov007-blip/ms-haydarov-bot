@@ -39,11 +39,11 @@ const CONFIRM_EMOJI_ID = process.env.EMOJI_RED_ID || '5273805757396031980';
 // Referal uchun kerakli odamlar soni
 const REQUIRED_REFERRALS = parseInt(process.env.REQUIRED_REFERRALS || '5', 10);
 
-// Maxsus guruh havolalari (vergul bilan ajratilgan, bir nechtasi bo'lishi mumkin)
-const GROUP_LINKS = (process.env.GROUP_LINKS || 'https://t.me/+xxxxxxxxxxxx')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+// Maxsus yopiq guruh — bot shu guruhda ADMIN bo'lishi va "Invite users via
+// link" huquqiga ega bo'lishi SHART. Bu yerga guruhning chat ID'si yoziladi
+// (masalan -1001234567890), username emas — chunki bir martalik havola
+// yaratish uchun aniq chat ID kerak.
+const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID;
 
 // Webhook uchun (Render'da ishlatiladi)
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
@@ -90,9 +90,23 @@ function getUser(db, userId) {
   return db.users[id];
 }
 
-function pickGroupLink() {
-  if (GROUP_LINKS.length === 1) return GROUP_LINKS[0];
-  return GROUP_LINKS[Math.floor(Math.random() * GROUP_LINKS.length)];
+// Har bir foydalanuvchi uchun bir martalik (faqat 1 kishi kira oladigan)
+// yopiq guruh havolasi yaratadi. Bot guruhda admin bo'lishi shart.
+async function createOneTimeGroupLink(ctx, userId) {
+  if (!GROUP_CHAT_ID) {
+    console.error('❌ GROUP_CHAT_ID .env faylida sozlanmagan!');
+    return null;
+  }
+  try {
+    const invite = await ctx.telegram.createChatInviteLink(GROUP_CHAT_ID, {
+      member_limit: 1,
+      name: 'referral-' + userId,
+    });
+    return invite.invite_link;
+  } catch (e) {
+    console.error("Bir martalik havola yaratib bo'lmadi:", e.message);
+    return null;
+  }
 }
 
 // ---------------------- BOT ----------------------
@@ -175,14 +189,24 @@ async function creditReferrerIfNeeded(ctx, db, user, userId) {
     );
 
     if (referrer.invitedCount >= REQUIRED_REFERRALS && !referrer.groupLinkSent) {
-      referrer.groupLinkSent = true;
-      saveDB(db);
-      const link = pickGroupLink();
-      await ctx.telegram.sendMessage(
-        user.invitedBy,
-        '🎉 Tabriklaymiz! Siz ' + REQUIRED_REFERRALS + " ta do'stingizni taklif qildingiz.\n\n" +
-        '👉 Maxsus yopiq guruhga qo\'shiling:\n' + link
-      );
+      const link = await createOneTimeGroupLink(ctx, user.invitedBy);
+      if (link) {
+        referrer.groupLinkSent = true;
+        saveDB(db);
+        await ctx.telegram.sendMessage(
+          user.invitedBy,
+          '🎉 Tabriklaymiz! Siz ' + REQUIRED_REFERRALS + " ta do'stingizni taklif qildingiz.\n\n" +
+          "👉 Maxsus yopiq guruhga qo'shilish uchun shaxsan sizga mo'ljallangan " +
+          "bir martalik havola:\n" + link + "\n\n" +
+          "⚠️ Bu havola faqat 1 marta va faqat siz uchun ishlaydi."
+        );
+      } else {
+        await ctx.telegram.sendMessage(
+          user.invitedBy,
+          '🎉 Tabriklaymiz! Siz ' + REQUIRED_REFERRALS + " ta do'stingizni taklif qildingiz, " +
+          "lekin guruh havolasini yaratishda texnik xatolik yuz berdi. Administrator bilan bog'laning."
+        );
+      }
     }
   } catch (e) {
     console.error("Referrerga xabar yuborib bo'lmadi:", e.message);

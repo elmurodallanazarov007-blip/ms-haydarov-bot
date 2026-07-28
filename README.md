@@ -9,8 +9,14 @@ Tugmalar rangi va custom emoji **Bot API 9.4** imkoniyatlari orqali ishlaydi.
 2. Botni **ikkala kanalga ham admin** qilib qo'shing (a'zolikni tekshirish uchun shart):
    - `@Matematika_milliysertifikatim`
    - `@talimtalaba`
-3. Maxsus yopiq guruh(lar) yarating va taklif havolasini oling (`https://t.me/+...`).
-4. **Muhim:** tugmalarda custom emoji ko'rinishi uchun **bot egasining
+3. Maxsus yopiq guruhingizni yarating va botni shu guruhga **admin** qilib
+   qo'shing, **"Invite users via link"** huquqini albatta yoqing — bot har
+   bir foydalanuvchi uchun **bir martalik** (1 kishilik) havola shu huquq
+   orqali yaratadi.
+4. Guruhning **chat ID**'sini oling (username emas): botni/guruhni
+   [@userinfobot](https://t.me/userinfobot) yoki `@RawDataBot`ga vaqtincha
+   qo'shib, guruh ID'sini ko'ring (odatda `-100` bilan boshlanadi).
+5. **Muhim:** tugmalarda custom emoji ko'rinishi uchun **bot egasining
    Telegram Premium obunasi** bo'lishi kerak (yoki bot Fragment orqali
    qo'shimcha username sotib olgan bo'lishi kerak). Aks holda tugmalar rangi
    ishlaydi, lekin custom emoji ko'rinmasligi mumkin.
@@ -43,7 +49,7 @@ git push -u origin main
    - `CHANNEL_1_LINK`, `CHANNEL_2_LINK`
    - `EMOJI_BLUE_ID`, `EMOJI_GREEN_ID`, `EMOJI_RED_ID`
    - `REQUIRED_REFERRALS`
-   - `GROUP_LINKS`
+   - `GROUP_CHAT_ID`
    - `WEBHOOK_URL` — **birinchi deploydan keyin** Render bergan URL manzilini shu yerga yozing (masalan `https://ms-haydarov-bot.onrender.com`), so'ng qayta deploy qiling.
 5. **Create Web Service** bosing — Render avtomatik build va deploy qiladi.
 
@@ -65,6 +71,11 @@ bo'lgach "Tasdiqlash" tugmasi orqali tekshiriladi va referal havolangiz beriladi
   - Keyinchalik MongoDB Atlas (bepul) kabi haqiqiy bazaga o'tkazish tavsiya
     etiladi — aytsangiz shu qismini ham qo'shib beraman.
 - Bot **kanallarga admin bo'lishi shart**, aks holda a'zolikni tekshira olmaydi.
-- `GROUP_LINKS` ga bir nechta guruh havolasini vergul bilan qo'shsangiz, bot
-  ulardan tasodifiy birini yuboradi (bitta havola bersangiz — doim o'shani).
+- **Bir martalik guruh havolasi:** har bir foydalanuvchi 5 ta referalga
+  yetganda, bot Telegram'ning `createChatInviteLink` metodi orqali unga
+  maxsus, faqat 1 marta ishlaydigan (`member_limit: 1`) shaxsiy havola
+  yaratib yuboradi. Bu havolani boshqa hech kim ishlata olmaydi. Buning uchun
+  bot guruhda admin bo'lib, **"Invite users via link"** huquqiga ega bo'lishi
+  shart — aks holda havola yaratilmaydi va foydalanuvchiga xatolik xabari
+  ko'rsatiladi (log'da sababi ko'rinadi).
 - `/mystats` buyrug'i orqali foydalanuvchi o'z referal sonini ko'ra oladi.
