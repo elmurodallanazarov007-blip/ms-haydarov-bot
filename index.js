@@ -7,6 +7,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const { Telegraf } = require('telegraf');
 const express = require('express');
 const { MongoClient } = require('mongodb');
@@ -75,7 +76,7 @@ async function sendStyled(ctx, imageFileName, htmlCaption) {
       const isNetworkError = /socket hang up|ECONNRESET|ETIMEDOUT|network|fetch failed/i.test(e.message || '');
       if (!isNetworkError || attempt === MAX_ATTEMPTS) break;
 
-      await new Promise((res) => setTimeout(res, attempt * 1000)); // 1s, 2s kutib qayta urinish
+      await new Promise((res) => setTimeout(res, 300)); // tez qayta urinish — 300ms kutib
     }
   }
 
@@ -196,7 +197,23 @@ async function createOneTimeGroupLink(ctx, userId) {
 }
 
 // ---------------------- BOT ----------------------
-const bot = new Telegraf(BOT_TOKEN);
+// keepAlive: false — har bir so'rov uchun yangi ulanish ochiladi. Bu
+// "socket hang up" xatosining eng ko'p uchraydigan sababini (eski,
+// serverda yopib qo'yilgan, lekin klient hali "tirik" deb bilgan ulanish)
+// tag'in oldini oladi. timeout — sekin tarmoqda so'rov muddatidan oldin
+// uzilib qolmasligi uchun.
+const telegramAgent = new https.Agent({
+  keepAlive: false,
+  timeout: 30000,
+});
+
+const bot = new Telegraf(BOT_TOKEN, {
+  telegram: {
+    agent: telegramAgent,
+    webhookReply: false,
+  },
+  handlerTimeout: 90000,
+});
 
 // Har bir kanalda a'zolikni tekshirish
 async function isMemberOfChannel(ctx, chatId, userId) {
