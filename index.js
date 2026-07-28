@@ -16,23 +16,53 @@ const { MongoClient } = require('mongodb');
 // rasmlarni shu nomlar bilan joylashtiring)
 const IMAGES_DIR = path.join(__dirname, 'images');
 
-// Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
-// topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
-// bot rasm yo'qligi sababli yiqilib qolmaydi.
+// Rasm fayllari uchun keshlangan Telegram file_id'lar — bir marta fayldan
+// muvaffaqiyatli yuborilgach, keyingi barcha safarlarda fayl qayta o'qib
+// yuborilmaydi, faqat file_id orqali (tezroq va ishonchliroq) yuboriladi.
+// (index__48_.js dagi banner-keshlash usuli asosida)
+const photoFileIdCache = {};
+
+// Rasm + HTML matn (caption) bilan xabar yuboradi.
+// 1) Avval keshlangan file_id bo'lsa — shu orqali yuboradi (eng tez yo'l).
+// 2) Bo'lmasa — diskdan o'qib yuboradi va qaytgan file_id'ni keshlaydi.
+// 3) Ikkalasi ham muvaffaqiyatsiz bo'lsa (fayl yo'q yoki xato) — oddiy
+//    matnli xabar yuboradi, bot rasm sababli yiqilib qolmaydi.
+// Har bir qadamda nima bo'layotgani aniq logga yoziladi — muammoni topish
+// uchun Render loglariga qarash kifoya.
 async function sendStyled(ctx, imageFileName, htmlCaption) {
+  const cachedId = photoFileIdCache[imageFileName];
+
+  if (cachedId) {
+    try {
+      await ctx.replyWithPhoto(cachedId, { caption: htmlCaption, parse_mode: 'HTML' });
+      return;
+    } catch (e) {
+      console.error('⚠️ Keshlangan file_id ishlamadi (' + imageFileName + '):', e.message);
+      delete photoFileIdCache[imageFileName]; // kesh eskirgan bo'lishi mumkin
+    }
+  }
+
   const imgPath = path.join(IMAGES_DIR, imageFileName);
   if (fs.existsSync(imgPath)) {
     try {
-      await ctx.replyWithPhoto(
+      const sent = await ctx.replyWithPhoto(
         { source: fs.createReadStream(imgPath) },
         { caption: htmlCaption, parse_mode: 'HTML' }
       );
+      const photos = sent && sent.photo;
+      if (photos && photos.length) {
+        photoFileIdCache[imageFileName] = photos[photos.length - 1].file_id;
+        console.log('✅ Rasm yuborildi va keshlandi: ' + imageFileName);
+      }
       return;
     } catch (e) {
-      console.error('Rasm yuborib bo\'lmadi (' + imageFileName + '):', e.message);
-      // rasm bilan xato bo'lsa ham matn borib yetsin
+      console.error('❌ Rasm yuborib bo\'lmadi (' + imageFileName + '):', e.message);
     }
+  } else {
+    console.error('❌ Rasm fayli topilmadi: ' + imgPath);
   }
+
+  // Rasm hech qanday yo'l bilan yuborilmasa ham, matn borib yetsin
   await ctx.replyWithHTML(htmlCaption);
 }
 
