@@ -10,47 +10,74 @@ const path = require('path');
 const { Telegraf } = require('telegraf');
 const express = require('express');
 const { MongoClient } = require('mongodb');
- 
+
 // Rasmlar shu papkadan olinadi: /images/<fayl_nomi>
 // (loyihaning index.js bilan bir joyida "images" nomli papka yarating va
 // rasmlarni shu nomlar bilan joylashtiring)
 const IMAGES_DIR = path.join(__dirname, 'images');
- 
-// Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
-// topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
-// bot rasm yo'qligi sababli yiqilib qolmaydi.
+
+// Telegram: rasm caption (izoh) uzunligi 1024 belgidan oshsa, API xato
+// qaytaradi. Shu sababli uzun matnlarni caption sifatida EMAS, balki
+// rasmdan keyin alohida xabar sifatida yuboramiz.
+const TELEGRAM_CAPTION_LIMIT = 1024;
+
+// Rasm + HTML matn bilan xabar yuboradi. Agar rasm fayli topilmasa
+// (hali qo'yilmagan, nomi/harflari mos kelmagan bo'lsa), yoki caption
+// juda uzun bo'lsa, matnni alohida xabar sifatida yuboradi — shunda ham
+// rasm, ham to'liq matn foydalanuvchiga yetib boradi.
 async function sendStyled(ctx, imageFileName, htmlCaption) {
   const imgPath = path.join(IMAGES_DIR, imageFileName);
-  if (fs.existsSync(imgPath)) {
-    try {
-      const buffer = fs.readFileSync(imgPath);
+  const exists = fs.existsSync(imgPath);
+
+  if (!exists) {
+    console.error(
+      '⚠️ Rasm topilmadi: ' + imgPath +
+      ' (fayl nomi katta-kichik harflarga sezgir, aniq mos kelishi kerak!)'
+    );
+    await ctx.replyWithHTML(htmlCaption);
+    return;
+  }
+
+  const canUseCaption = htmlCaption.length <= TELEGRAM_CAPTION_LIMIT;
+
+  try {
+    if (canUseCaption) {
+      // Qisqa matn — rasm ostida caption sifatida yuboriladi
       await ctx.replyWithPhoto(
-        { source: buffer },
+        { source: fs.createReadStream(imgPath) },
         { caption: htmlCaption, parse_mode: 'HTML' }
       );
-      return;
-    } catch (e) {
-      console.error('Rasm yuborib bo\'lmadi (' + imageFileName + '):', e.message);
-      // rasm bilan xato bo'lsa ham matn borib yetsin
+    } else {
+      // Uzun matn — avval faqat rasm, keyin alohida to'liq matn xabari
+      await ctx.replyWithPhoto({ source: fs.createReadStream(imgPath) });
+      await ctx.replyWithHTML(htmlCaption);
     }
+    return;
+  } catch (e) {
+    console.error(
+      'Rasm yuborib bo\'lmadi (' + imageFileName + '):',
+      e.message,
+      e.response ? JSON.stringify(e.response) : ''
+    );
+    // rasm bilan xato bo'lsa ham matn borib yetsin
   }
   await ctx.replyWithHTML(htmlCaption);
 }
- 
+
 // ---------------------- SOZLAMALAR ----------------------
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN .env faylida topilmadi!');
   process.exit(1);
 }
- 
+
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) {
   console.error('❌ MONGODB_URI .env faylida topilmadi! MongoDB Atlas connection string kerak.');
   process.exit(1);
 }
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'ms_haydarov_bot';
- 
+
 // Majburiy obuna kanallari — bot ikkalasida ham ADMIN bo'lishi SHART
 const CHANNELS = [
   {
@@ -68,26 +95,26 @@ const CHANNELS = [
     emojiId: process.env.EMOJI_GREEN_ID || '5451880684945708278',
   },
 ];
- 
+
 const CONFIRM_STYLE = 'danger'; // qizil
 const CONFIRM_EMOJI_ID = process.env.EMOJI_RED_ID || '5273805757396031980';
- 
+
 // Referal uchun kerakli odamlar soni
 const REQUIRED_REFERRALS = parseInt(process.env.REQUIRED_REFERRALS || '5', 10);
- 
+
 // Maxsus yopiq guruh — bot shu guruhda ADMIN bo'lishi va "Invite users via
 // link" huquqiga ega bo'lishi SHART. Bu yerga guruhning chat ID'si yoziladi
 // (masalan -1001234567890), username emas — chunki bir martalik havola
 // yaratish uchun aniq chat ID kerak.
 const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID;
- 
+
 // Webhook uchun (Render'da ishlatiladi)
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const PORT = process.env.PORT || 3000;
- 
+
 // ---------------------- MA'LUMOTLAR BAZASI (MongoDB Atlas) ----------------------
 let usersCollection = null;
- 
+
 async function connectDB() {
   const client = new MongoClient(MONGODB_URI);
   await client.connect();
@@ -97,7 +124,7 @@ async function connectDB() {
   await usersCollection.createIndex({ userId: 1 }, { unique: true });
   console.log('✅ MongoDB Atlas ulandi (' + MONGODB_DB_NAME + ')');
 }
- 
+
 // Foydalanuvchini bazadan olish, topilmasa yangisini yaratish
 async function getUser(userId) {
   const id = String(userId);
@@ -115,7 +142,7 @@ async function getUser(userId) {
   }
   return user;
 }
- 
+
 // Foydalanuvchi obyektini bazaga yozish (upsert)
 async function saveUser(user) {
   const { _id, ...rest } = user; // _id ni o'zgartirmaslik uchun ajratamiz
@@ -125,7 +152,7 @@ async function saveUser(user) {
     { upsert: true }
   );
 }
- 
+
 // Har bir foydalanuvchi uchun bir martalik (faqat 1 kishi kira oladigan)
 // yopiq guruh havolasi yaratadi. Bot guruhda admin bo'lishi shart.
 async function createOneTimeGroupLink(ctx, userId) {
@@ -144,10 +171,10 @@ async function createOneTimeGroupLink(ctx, userId) {
     return null;
   }
 }
- 
+
 // ---------------------- BOT ----------------------
 const bot = new Telegraf(BOT_TOKEN);
- 
+
 // Har bir kanalda a'zolikni tekshirish
 async function isMemberOfChannel(ctx, chatId, userId) {
   try {
@@ -158,7 +185,7 @@ async function isMemberOfChannel(ctx, chatId, userId) {
     return false; // xatolik bo'lsa xavfsizlik uchun "a'zo emas" deb hisoblanadi
   }
 }
- 
+
 async function isSubscribedToAll(ctx, userId) {
   for (const ch of CHANNELS) {
     const ok = await isMemberOfChannel(ctx, ch.chatId, userId);
@@ -166,7 +193,7 @@ async function isSubscribedToAll(ctx, userId) {
   }
   return true;
 }
- 
+
 // Obuna klaviaturasi — Bot API 9.4: style (rang) + icon_custom_emoji_id
 function buildSubscribeKeyboard() {
   const rows = CHANNELS.map((ch) => [
@@ -187,7 +214,7 @@ function buildSubscribeKeyboard() {
   ]);
   return { inline_keyboard: rows };
 }
- 
+
 function subscribeMessageText() {
   return (
     "Assalomu alaykum! 👋\n\n" +
@@ -195,7 +222,7 @@ function subscribeMessageText() {
     'so\'ng "Tasdiqlash" tugmasini bosing:'
   );
 }
- 
+
 // Premium custom emojilar (foydalanuvchi tomonidan berilgan ID'lar).
 // Bot API 9.4 talab qiladigan tarzda <tg-emoji emoji-id="..."> orqali
 // HTML parse_mode bilan yuboriladi.
@@ -213,19 +240,19 @@ const REF_EMOJI = {
   paperclip: '5271604874419647061', // 📎
   people: '5319106456799158575',  // 👥
 };
- 
+
 function tgEmoji(key, emoji) {
   const id = REF_EMOJI[key];
   return id ? '<tg-emoji emoji-id="' + id + '">' + emoji + '</tg-emoji>' : emoji;
 }
- 
+
 // Har bir qism alohida xabar sifatida yuboriladi (kelajakda har biriga
 // alohida rasm biriktirish uchun ham shu tarzda qulay).
 async function sendReferralInfo(ctx, userId) {
   const user = await getUser(userId);
   const me = await ctx.telegram.getMe();
   const refLink = 'https://t.me/' + me.username + '?start=' + userId;
- 
+
   const introText =
     tgEmoji('party', '🎉') + ' Tabriklaymiz, obuna tasdiqlandi!\n\n' +
     tgEmoji('check', '✅') + " Matematikadan A+ olish uchun bepul tayyorlanish imkoniyati sizda!\n" +
@@ -235,42 +262,42 @@ async function sendReferralInfo(ctx, userId) {
     tgEmoji('target', '🎯') + ' ' + REQUIRED_REFERRALS + " ta matematik do'st taklif qilsangiz:\n" +
     tgEmoji('fire', '🔥') + " Bot sizga avtomatik tarzda Yopiq guruh havolasini beradi!\n" +
     tgEmoji('sparkles', '✨') + " Imkoniyatni qo'ldan boy bermang!";
- 
+
   const linkText =
     tgEmoji('paperclip', '📎') + ' Sizning referal havolangiz:\n' + refLink;
- 
+
   const statsText =
     tgEmoji('people', '👥') + ' Taklif qilingan do\'stlar: ' + user.invitedCount + '/' + REQUIRED_REFERRALS;
- 
+
   const warnText =
     tgEmoji('exclaim', '⚠️') + " Muhim: ball olish uchun do'stingiz botga kirib, majburiy kanallarga a'zo bo'lishi kerak.";
- 
+
   const ctaText =
     tgEmoji('down', '👇') + " Havolani do'stlaringizga hozir yuboring!";
- 
+
   const infoText =
     linkText + '\n\n' +
     statsText + '\n\n' +
     warnText + '\n' +
     ctaText;
- 
+
   await sendStyled(ctx, 'referral-intro.jpg', introText);
   await sendStyled(ctx, 'referral-info.jpg', infoText);
 }
- 
+
 async function creditReferrerIfNeeded(ctx, user, userId) {
   if (!user.invitedBy) return;
   const referrer = await getUser(user.invitedBy);
   referrer.invitedCount += 1;
   await saveUser(referrer);
- 
+
   try {
     await ctx.telegram.sendMessage(
       user.invitedBy,
       "🎉 Sizning havolangiz orqali yangi foydalanuvchi qo'shildi!\n" +
       'Jami taklif qilinganlar: ' + referrer.invitedCount + '/' + REQUIRED_REFERRALS
     );
- 
+
     if (referrer.invitedCount >= REQUIRED_REFERRALS && !referrer.groupLinkSent) {
       const link = await createOneTimeGroupLink(ctx, user.invitedBy);
       if (link) {
@@ -295,13 +322,13 @@ async function creditReferrerIfNeeded(ctx, user, userId) {
     console.error("Referrerga xabar yuborib bo'lmadi:", e.message);
   }
 }
- 
+
 // ---------------------- HANDLERLAR ----------------------
- 
+
 bot.start(async (ctx) => {
   const userId = ctx.from.id;
   const user = await getUser(userId);
- 
+
   // Referal parametrini o'qish: /start <referrerId>
   const payload = ctx.startPayload;
   if (payload && /^\d+$/.test(payload)) {
@@ -311,7 +338,7 @@ bot.start(async (ctx) => {
     }
   }
   await saveUser(user);
- 
+
   const subscribed = await isSubscribedToAll(ctx, userId);
   if (!subscribed) {
     await ctx.reply(subscribeMessageText(), {
@@ -319,21 +346,21 @@ bot.start(async (ctx) => {
     });
     return;
   }
- 
+
   const firstTime = !user.verified;
   user.verified = true;
   await saveUser(user);
- 
+
   if (firstTime) {
     await creditReferrerIfNeeded(ctx, user, userId);
   }
   await sendReferralInfo(ctx, userId);
 });
- 
+
 bot.action('check_sub', async (ctx) => {
   const userId = ctx.from.id;
   const user = await getUser(userId);
- 
+
   const subscribed = await isSubscribedToAll(ctx, userId);
   if (!subscribed) {
     await ctx.answerCbQuery("❌ Siz hali barcha kanallarga obuna bo'lmadingiz!", {
@@ -341,26 +368,26 @@ bot.action('check_sub', async (ctx) => {
     });
     return;
   }
- 
+
   await ctx.answerCbQuery('✅ Obuna tasdiqlandi!');
- 
+
   const firstTimeConfirm = !user.verified;
   user.verified = true;
   await saveUser(user);
- 
+
   if (firstTimeConfirm) {
     await creditReferrerIfNeeded(ctx, user, userId);
   }
- 
+
   try {
     await ctx.editMessageReplyMarkup(undefined);
   } catch (e) {
     // e'tiborsiz qoldiramiz
   }
- 
+
   await sendReferralInfo(ctx, userId);
 });
- 
+
 bot.command('mystats', async (ctx) => {
   const user = await getUser(ctx.from.id);
   await ctx.reply(
@@ -368,25 +395,25 @@ bot.command('mystats', async (ctx) => {
     "Taklif qilinganlar: " + user.invitedCount + '/' + REQUIRED_REFERRALS
   );
 });
- 
+
 bot.catch((err, ctx) => {
   console.error('Xatolik yuz berdi (update ' + ctx.updateType + '):', err);
 });
- 
+
 // ---------------------- ISHGA TUSHIRISH ----------------------
 async function main() {
   await connectDB();
- 
+
   if (WEBHOOK_URL) {
     // Render (production) — webhook rejimi
     const app = express();
     app.use(express.json());
- 
+
     const secretPath = '/webhook/' + BOT_TOKEN;
     app.use(bot.webhookCallback(secretPath));
- 
+
     app.get('/', (req, res) => res.send('MS Haydarov Bot ishlayapti ✅'));
- 
+
     app.listen(PORT, async () => {
       await bot.telegram.setWebhook(WEBHOOK_URL + secretPath);
       console.log('✅ Server ' + PORT + '-portda ishga tushdi');
@@ -398,11 +425,11 @@ async function main() {
     console.log('✅ MS Haydarov bot polling rejimida ishga tushdi (lokal)');
   }
 }
- 
+
 main().catch((e) => {
   console.error('❌ Botni ishga tushirishda xatolik:', e.message);
   process.exit(1);
 });
- 
+
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
