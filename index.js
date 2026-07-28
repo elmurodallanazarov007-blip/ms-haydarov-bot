@@ -247,11 +247,14 @@ async function sendReferralInfo(ctx, userId) {
   const ctaText =
     tgEmoji('down', '👇') + " Havolani do'stlaringizga hozir yuboring!";
 
+  const infoText =
+    linkText + '\n\n' +
+    statsText + '\n\n' +
+    warnText + '\n' +
+    ctaText;
+
   await sendStyled(ctx, 'referral-intro.jpg', introText);
-  await sendStyled(ctx, 'referral-link.jpg', linkText);
-  await sendStyled(ctx, 'referral-stats.jpg', statsText);
-  await sendStyled(ctx, 'referral-warning.jpg', warnText);
-  await sendStyled(ctx, 'referral-cta.jpg', ctaText);
+  await sendStyled(ctx, 'referral-info.jpg', infoText);
 }
 
 async function creditReferrerIfNeeded(ctx, user, userId) {
