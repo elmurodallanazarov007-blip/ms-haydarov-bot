@@ -5,72 +5,62 @@
 // tirilganda yoki qayta deploy bo'lganda ham ma'lumotlar yo'qolmaydi)
 // ==========================================================
 require('dotenv').config();
-const https = require('https');
+const fs = require('fs');
+const path = require('path');
 const { Telegraf } = require('telegraf');
 const express = require('express');
 const { MongoClient } = require('mongodb');
 
-// Rasmlar endi GitHub'dagi PUBLIC repo'dan, raw.githubusercontent.com
-// orqali to'g'ridan-to'g'ri URL sifatida yuboriladi. Bu eng tez va
-// barqaror yo'l: Telegram rasmni o'zi GitHub'dan yuklab oladi, bot
-// serveri hech qanday faylni o'qib/yuklab o'tirmaydi — shuning uchun
-// bot "qotib qolmaydi" va javob tezroq bo'ladi.
-//
-// Repo: elmurodallanazarov007-blip/ms-haydarov-bot (branch: main)
-// Rasmlarni "images/" papkasiga shu nomlar bilan joylashtirib, GitHub'ga
-// push qiling — havolalar avtomatik ishlay boshlaydi.
-const GITHUB_RAW_BASE =
-  'https://raw.githubusercontent.com/elmurodallanazarov007-blip/ms-haydarov-bot/main/images/';
+// Rasmlar shu papkadan olinadi: /images/<fayl_nomi>
+// (loyihaning index.js bilan bir joyida "images" nomli papka yarating va
+// rasmlarni shu nomlar bilan joylashtiring)
+const IMAGES_DIR = path.join(__dirname, 'images');
 
-const IMAGE_URLS = {
-  'referral-intro.jpg': GITHUB_RAW_BASE + 'referral-intro.jpg',
-  'referral-info.jpg': GITHUB_RAW_BASE + 'referral-info.jpg',
-};
+// Telegram: rasm caption (izoh) uzunligi 1024 belgidan oshsa, API xato
+// qaytaradi. Shu sababli uzun matnlarni caption sifatida EMAS, balki
+// rasmdan keyin alohida xabar sifatida yuboramiz.
+const TELEGRAM_CAPTION_LIMIT = 1024;
 
-// Rasm (URL orqali) + HTML matn (caption) bilan xabar yuboradi.
-// Agar biror sababdan (masalan rasm hali reponi push qilinmagan yoki
-// GitHub vaqtincha javob bermayapti) xatolik chiqsa — bot yiqilib
-// qolmaydi, shunchaki oddiy matnli xabar yuboradi va davom etadi.
+// Rasm + HTML matn bilan xabar yuboradi. Agar rasm fayli topilmasa
+// (hali qo'yilmagan, nomi/harflari mos kelmagan bo'lsa), yoki caption
+// juda uzun bo'lsa, matnni alohida xabar sifatida yuboradi — shunda ham
+// rasm, ham to'liq matn foydalanuvchiga yetib boradi.
 async function sendStyled(ctx, imageFileName, htmlCaption) {
-  const imageUrl = IMAGE_URLS[imageFileName];
+  const imgPath = path.join(IMAGES_DIR, imageFileName);
+  const exists = fs.existsSync(imgPath);
 
-  if (!imageUrl) {
-    console.error('❌ Bu fayl uchun URL sozlanmagan: ' + imageFileName);
+  if (!exists) {
+    console.error(
+      '⚠️ Rasm topilmadi: ' + imgPath +
+      ' (fayl nomi katta-kichik harflarga sezgir, aniq mos kelishi kerak!)'
+    );
     await ctx.replyWithHTML(htmlCaption);
     return;
   }
 
-  const MAX_ATTEMPTS = 2; // URL orqali yuborish tez, ko'p urinishga hojat yo'q
-  let lastErr = null;
+  const canUseCaption = htmlCaption.length <= TELEGRAM_CAPTION_LIMIT;
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
+  try {
+    if (canUseCaption) {
+      // Qisqa matn — rasm ostida caption sifatida yuboriladi
       await ctx.replyWithPhoto(
-        { url: imageUrl },
+        { source: fs.createReadStream(imgPath) },
         { caption: htmlCaption, parse_mode: 'HTML' }
       );
-      return; // muvaffaqiyatli yuborildi
-    } catch (e) {
-      lastErr = e;
-      const telegramReason = e.response && e.response.description ? e.response.description : null;
-      console.error(
-        '⚠️  Rasm yuborishda xatolik (' + imageFileName + '), urinish ' + attempt + '/' + MAX_ATTEMPTS + ':\n' +
-        '   message: ' + e.message +
-        (telegramReason ? '\n   telegram_description: ' + telegramReason : '')
-      );
-
-      const isNetworkError = /socket hang up|ECONNRESET|ETIMEDOUT|network|fetch failed|timeout/i.test(e.message || '');
-      if (!isNetworkError || attempt === MAX_ATTEMPTS) break;
-
-      await new Promise((res) => setTimeout(res, 300));
+    } else {
+      // Uzun matn — avval faqat rasm, keyin alohida to'liq matn xabari
+      await ctx.replyWithPhoto({ source: fs.createReadStream(imgPath) });
+      await ctx.replyWithHTML(htmlCaption);
     }
+    return;
+  } catch (e) {
+    console.error(
+      'Rasm yuborib bo\'lmadi (' + imageFileName + '):',
+      e.message,
+      e.response ? JSON.stringify(e.response) : ''
+    );
+    // rasm bilan xato bo'lsa ham matn borib yetsin
   }
-
-  console.error(
-    '❌ RASM YUBORIB BO\'LMADI (' + imageFileName + '), ' + MAX_ATTEMPTS + ' urinishdan keyin ham:\n' +
-    '   url: ' + imageUrl + '\n' +
-    '   to\'liq stack: ' + (lastErr ? lastErr.stack : 'n/a')
-  );
   await ctx.replyWithHTML(htmlCaption);
 }
 
@@ -183,23 +173,7 @@ async function createOneTimeGroupLink(ctx, userId) {
 }
 
 // ---------------------- BOT ----------------------
-// keepAlive: false — har bir so'rov uchun yangi ulanish ochiladi. Bu
-// "socket hang up" xatosining eng ko'p uchraydigan sababini (eski,
-// serverda yopib qo'yilgan, lekin klient hali "tirik" deb bilgan ulanish)
-// tag'in oldini oladi. timeout — sekin tarmoqda so'rov muddatidan oldin
-// uzilib qolmasligi uchun.
-const telegramAgent = new https.Agent({
-  keepAlive: false,
-  timeout: 30000,
-});
-
-const bot = new Telegraf(BOT_TOKEN, {
-  telegram: {
-    agent: telegramAgent,
-    webhookReply: false,
-  },
-  handlerTimeout: 90000,
-});
+const bot = new Telegraf(BOT_TOKEN);
 
 // Har bir kanalda a'zolikni tekshirish
 async function isMemberOfChannel(ctx, chatId, userId) {
@@ -427,19 +401,7 @@ bot.catch((err, ctx) => {
 });
 
 // ---------------------- ISHGA TUSHIRISH ----------------------
-// Rasmlar GitHub raw URL orqali yuborilgani uchun (mahalliy faylni
-// o'qish shart emas), shunchaki qaysi URL'lar ishlatilayotganini
-// logga chiqarib qo'yamiz — muammo bo'lsa tezroq aniqlash uchun.
-function checkImageUrls() {
-  console.log('--- RASM MANZILLARI (GitHub raw) ---');
-  Object.entries(IMAGE_URLS).forEach(([name, url]) => {
-    console.log('  ' + name + ' -> ' + url);
-  });
-  console.log('-------------------------------------');
-}
-
 async function main() {
-  checkImageUrls();
   await connectDB();
 
   if (WEBHOOK_URL) {
