@@ -16,50 +16,22 @@ const { MongoClient } = require('mongodb');
 // rasmlarni shu nomlar bilan joylashtiring)
 const IMAGES_DIR = path.join(__dirname, 'images');
 
-// Telegram: rasm caption (izoh) uzunligi 1024 belgidan oshsa, API xato
-// qaytaradi. Shu sababli uzun matnlarni caption sifatida EMAS, balki
-// rasmdan keyin alohida xabar sifatida yuboramiz.
-const TELEGRAM_CAPTION_LIMIT = 1024;
-
-// Rasm + HTML matn bilan xabar yuboradi. Agar rasm fayli topilmasa
-// (hali qo'yilmagan, nomi/harflari mos kelmagan bo'lsa), yoki caption
-// juda uzun bo'lsa, matnni alohida xabar sifatida yuboradi — shunda ham
-// rasm, ham to'liq matn foydalanuvchiga yetib boradi.
+// Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
+// topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
+// bot rasm yo'qligi sababli yiqilib qolmaydi.
 async function sendStyled(ctx, imageFileName, htmlCaption) {
   const imgPath = path.join(IMAGES_DIR, imageFileName);
-  const exists = fs.existsSync(imgPath);
-
-  if (!exists) {
-    console.error(
-      '⚠️ Rasm topilmadi: ' + imgPath +
-      ' (fayl nomi katta-kichik harflarga sezgir, aniq mos kelishi kerak!)'
-    );
-    await ctx.replyWithHTML(htmlCaption);
-    return;
-  }
-
-  const canUseCaption = htmlCaption.length <= TELEGRAM_CAPTION_LIMIT;
-
-  try {
-    if (canUseCaption) {
-      // Qisqa matn — rasm ostida caption sifatida yuboriladi
+  if (fs.existsSync(imgPath)) {
+    try {
       await ctx.replyWithPhoto(
         { source: fs.createReadStream(imgPath) },
         { caption: htmlCaption, parse_mode: 'HTML' }
       );
-    } else {
-      // Uzun matn — avval faqat rasm, keyin alohida to'liq matn xabari
-      await ctx.replyWithPhoto({ source: fs.createReadStream(imgPath) });
-      await ctx.replyWithHTML(htmlCaption);
+      return;
+    } catch (e) {
+      console.error('Rasm yuborib bo\'lmadi (' + imageFileName + '):', e.message);
+      // rasm bilan xato bo'lsa ham matn borib yetsin
     }
-    return;
-  } catch (e) {
-    console.error(
-      'Rasm yuborib bo\'lmadi (' + imageFileName + '):',
-      e.message,
-      e.response ? JSON.stringify(e.response) : ''
-    );
-    // rasm bilan xato bo'lsa ham matn borib yetsin
   }
   await ctx.replyWithHTML(htmlCaption);
 }
