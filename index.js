@@ -5,9 +5,36 @@
 // tirilganda yoki qayta deploy bo'lganda ham ma'lumotlar yo'qolmaydi)
 // ==========================================================
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { Telegraf } = require('telegraf');
 const express = require('express');
 const { MongoClient } = require('mongodb');
+
+// Rasmlar shu papkadan olinadi: /images/<fayl_nomi>
+// (loyihaning index.js bilan bir joyida "images" nomli papka yarating va
+// rasmlarni shu nomlar bilan joylashtiring)
+const IMAGES_DIR = path.join(__dirname, 'images');
+
+// Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
+// topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
+// bot rasm yo'qligi sababli yiqilib qolmaydi.
+async function sendStyled(ctx, imageFileName, htmlCaption) {
+  const imgPath = path.join(IMAGES_DIR, imageFileName);
+  if (fs.existsSync(imgPath)) {
+    try {
+      await ctx.replyWithPhoto(
+        { source: fs.createReadStream(imgPath) },
+        { caption: htmlCaption, parse_mode: 'HTML' }
+      );
+      return;
+    } catch (e) {
+      console.error('Rasm yuborib bo\'lmadi (' + imageFileName + '):', e.message);
+      // rasm bilan xato bo'lsa ham matn borib yetsin
+    }
+  }
+  await ctx.replyWithHTML(htmlCaption);
+}
 
 // ---------------------- SOZLAMALAR ----------------------
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -191,12 +218,14 @@ function tgEmoji(key, emoji) {
   return id ? '<tg-emoji emoji-id="' + id + '">' + emoji + '</tg-emoji>' : emoji;
 }
 
+// Har bir qism alohida xabar sifatida yuboriladi (kelajakda har biriga
+// alohida rasm biriktirish uchun ham shu tarzda qulay).
 async function sendReferralInfo(ctx, userId) {
   const user = await getUser(userId);
   const me = await ctx.telegram.getMe();
   const refLink = 'https://t.me/' + me.username + '?start=' + userId;
 
-  const text =
+  const introText =
     tgEmoji('party', '🎉') + ' Tabriklaymiz, obuna tasdiqlandi!\n\n' +
     tgEmoji('check', '✅') + " Matematikadan A+ olish uchun bepul tayyorlanish imkoniyati sizda!\n" +
     tgEmoji('star', '🌟') + " Har bir yangi do'st taklif qilsangiz — bonus ball beriladi!\n" +
@@ -204,13 +233,25 @@ async function sendReferralInfo(ctx, userId) {
     tgEmoji('boom', '💥') + " Do'stingiz botga kirib, kanallarga a'zo bo'lsa — +1 ball avto qo'shiladi!\n" +
     tgEmoji('target', '🎯') + ' ' + REQUIRED_REFERRALS + " ta matematik do'st taklif qilsangiz:\n" +
     tgEmoji('fire', '🔥') + " Bot sizga avtomatik tarzda Yopiq guruh havolasini beradi!\n" +
-    tgEmoji('sparkles', '✨') + " Imkoniyatni qo'ldan boy bermang!\n\n" +
-    tgEmoji('paperclip', '📎') + ' Sizning referal havolangiz:\n' + refLink + '\n\n' +
-    tgEmoji('people', '👥') + ' Taklif qilingan do\'stlar: ' + user.invitedCount + '/' + REQUIRED_REFERRALS + '\n\n' +
-    tgEmoji('exclaim', '❗️') + " Muhim: ball olish uchun do'stingiz botga kirib, majburiy kanallarga a'zo bo'lishi kerak.\n" +
+    tgEmoji('sparkles', '✨') + " Imkoniyatni qo'ldan boy bermang!";
+
+  const linkText =
+    tgEmoji('paperclip', '📎') + ' Sizning referal havolangiz:\n' + refLink;
+
+  const statsText =
+    tgEmoji('people', '👥') + ' Taklif qilingan do\'stlar: ' + user.invitedCount + '/' + REQUIRED_REFERRALS;
+
+  const warnText =
+    tgEmoji('exclaim', '⚠️') + " Muhim: ball olish uchun do'stingiz botga kirib, majburiy kanallarga a'zo bo'lishi kerak.";
+
+  const ctaText =
     tgEmoji('down', '👇') + " Havolani do'stlaringizga hozir yuboring!";
 
-  await ctx.replyWithHTML(text);
+  await sendStyled(ctx, 'referral-intro.jpg', introText);
+  await sendStyled(ctx, 'referral-link.jpg', linkText);
+  await sendStyled(ctx, 'referral-stats.jpg', statsText);
+  await sendStyled(ctx, 'referral-warning.jpg', warnText);
+  await sendStyled(ctx, 'referral-cta.jpg', ctaText);
 }
 
 async function creditReferrerIfNeeded(ctx, user, userId) {
