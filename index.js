@@ -47,24 +47,44 @@ async function sendStyled(ctx, imageFileName, htmlCaption) {
     return;
   }
 
-  try {
-    await ctx.replyWithPhoto(
-      { source: fs.createReadStream(imgPath) },
-      { caption: htmlCaption, parse_mode: 'HTML' }
-    );
-  } catch (e) {
-    // Telegram API xatolarida asosiy sabab e.response.description ichida bo'ladi,
-    // e.message ko'pincha "400: Bad Request" kabi umumiy narsa qaytaradi.
-    const telegramReason = e.response && e.response.description ? e.response.description : null;
-    console.error(
-      '❌ RASM YUBORISHDA XATOLIK (' + imageFileName + '):\n' +
-      '   message: ' + e.message + '\n' +
-      (telegramReason ? '   telegram_description: ' + telegramReason + '\n' : '') +
-      '   fayl hajmi: ' + (stat.size / 1024).toFixed(1) + ' KB\n' +
-      '   to\'liq stack: ' + e.stack
-    );
-    await ctx.replyWithHTML(htmlCaption);
+  // Streamdan emas, tayyor buffer'dan yuboramiz — "socket hang up" kabi
+  // tarmoq uzilishlariga stream ko'proq moyil bo'ladi, buffer barqarorroq.
+  const fileBuffer = fs.readFileSync(imgPath);
+
+  const MAX_ATTEMPTS = 3;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await ctx.replyWithPhoto(
+        { source: fileBuffer, filename: imageFileName },
+        { caption: htmlCaption, parse_mode: 'HTML' }
+      );
+      return; // muvaffaqiyatli yuborildi
+    } catch (e) {
+      lastErr = e;
+      const telegramReason = e.response && e.response.description ? e.response.description : null;
+      console.error(
+        '⚠️  Rasm yuborishda xatolik (' + imageFileName + '), urinish ' + attempt + '/' + MAX_ATTEMPTS + ':\n' +
+        '   message: ' + e.message +
+        (telegramReason ? '\n   telegram_description: ' + telegramReason : '')
+      );
+
+      // Telegram'ning "400 Bad Request" kabi doimiy xatolarida qayta urinishning
+      // ma'nosi yo'q — faqat tarmoq xatolarida (socket hang up, timeout, ECONNRESET) urinamiz
+      const isNetworkError = /socket hang up|ECONNRESET|ETIMEDOUT|network|fetch failed/i.test(e.message || '');
+      if (!isNetworkError || attempt === MAX_ATTEMPTS) break;
+
+      await new Promise((res) => setTimeout(res, attempt * 1000)); // 1s, 2s kutib qayta urinish
+    }
   }
+
+  console.error(
+    '❌ RASM YUBORIB BO\'LMADI (' + imageFileName + '), ' + MAX_ATTEMPTS + ' urinishdan keyin ham:\n' +
+    '   fayl hajmi: ' + (stat.size / 1024).toFixed(1) + ' KB\n' +
+    '   to\'liq stack: ' + (lastErr ? lastErr.stack : 'n/a')
+  );
+  await ctx.replyWithHTML(htmlCaption);
 }
 
 // ---------------------- SOZLAMALAR ----------------------
