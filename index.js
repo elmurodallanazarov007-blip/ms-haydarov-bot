@@ -21,19 +21,50 @@ const IMAGES_DIR = path.join(__dirname, 'images');
 // bot rasm yo'qligi sababli yiqilib qolmaydi.
 async function sendStyled(ctx, imageFileName, htmlCaption) {
   const imgPath = path.join(IMAGES_DIR, imageFileName);
-  if (fs.existsSync(imgPath)) {
-    try {
-      await ctx.replyWithPhoto(
-        { source: fs.createReadStream(imgPath) },
-        { caption: htmlCaption, parse_mode: 'HTML' }
-      );
-      return;
-    } catch (e) {
-      console.error('Rasm yuborib bo\'lmadi (' + imageFileName + '):', e.message);
-      // rasm bilan xato bo'lsa ham matn borib yetsin
-    }
+
+  if (!fs.existsSync(imgPath)) {
+    console.error(
+      '❌ RASM TOPILMADI: ' + imgPath + '\n' +
+      '   -> "images" papka mavjudmi va Git orqali deploy qilinganmi tekshiring.\n' +
+      '   -> Papkadagi haqiqiy fayllar: ' +
+      (fs.existsSync(IMAGES_DIR)
+        ? JSON.stringify(fs.readdirSync(IMAGES_DIR))
+        : "IMAGES_DIR papkaning o'zi yo'q!")
+    );
+    await ctx.replyWithHTML(htmlCaption);
+    return;
   }
-  await ctx.replyWithHTML(htmlCaption);
+
+  const stat = fs.statSync(imgPath);
+  if (stat.size === 0) {
+    console.error('❌ RASM BO\'SH (0 bayt): ' + imgPath);
+    await ctx.replyWithHTML(htmlCaption);
+    return;
+  }
+  if (stat.size > 10 * 1024 * 1024) {
+    console.error('❌ RASM JUDA KATTA (' + (stat.size / 1024 / 1024).toFixed(2) + ' MB): ' + imgPath + ' — Telegram limiti 10MB');
+    await ctx.replyWithHTML(htmlCaption);
+    return;
+  }
+
+  try {
+    await ctx.replyWithPhoto(
+      { source: fs.createReadStream(imgPath) },
+      { caption: htmlCaption, parse_mode: 'HTML' }
+    );
+  } catch (e) {
+    // Telegram API xatolarida asosiy sabab e.response.description ichida bo'ladi,
+    // e.message ko'pincha "400: Bad Request" kabi umumiy narsa qaytaradi.
+    const telegramReason = e.response && e.response.description ? e.response.description : null;
+    console.error(
+      '❌ RASM YUBORISHDA XATOLIK (' + imageFileName + '):\n' +
+      '   message: ' + e.message + '\n' +
+      (telegramReason ? '   telegram_description: ' + telegramReason + '\n' : '') +
+      '   fayl hajmi: ' + (stat.size / 1024).toFixed(1) + ' KB\n' +
+      '   to\'liq stack: ' + e.stack
+    );
+    await ctx.replyWithHTML(htmlCaption);
+  }
 }
 
 // ---------------------- SOZLAMALAR ----------------------
@@ -373,7 +404,33 @@ bot.catch((err, ctx) => {
 });
 
 // ---------------------- ISHGA TUSHIRISH ----------------------
+function checkImagesFolder() {
+  console.log('--- RASMLAR PAPKASINI TEKSHIRISH ---');
+  console.log('Kutilayotgan yo\'l: ' + IMAGES_DIR);
+  if (!fs.existsSync(IMAGES_DIR)) {
+    console.error(
+      '❌ "images" papka topilmadi! Uni index.js bilan bir joyga qo\'shing va\n' +
+      '   Git\'ga qo\'shilganiga (.gitignore\'da bo\'lmasligiga) ishonch hosil qiling,\n' +
+      '   so\'ng qayta deploy qiling.'
+    );
+    return;
+  }
+  const files = fs.readdirSync(IMAGES_DIR);
+  if (files.length === 0) {
+    console.error('❌ "images" papka bor, lekin bo\'sh — hech qanday fayl yo\'q.');
+  } else {
+    console.log('✅ Topilgan rasmlar (' + files.length + ' ta): ' + JSON.stringify(files));
+  }
+  ['referral-intro.jpg', 'referral-info.jpg'].forEach((needed) => {
+    if (!files.includes(needed)) {
+      console.error('⚠️  Kerakli fayl yo\'q: "' + needed + '" (nomi katta-kichik harfgacha aniq mos kelishi kerak!)');
+    }
+  });
+  console.log('------------------------------------');
+}
+
 async function main() {
+  checkImagesFolder();
   await connectDB();
 
   if (WEBHOOK_URL) {
