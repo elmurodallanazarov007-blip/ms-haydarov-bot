@@ -16,82 +16,24 @@ const { MongoClient } = require('mongodb');
 // rasmlarni shu nomlar bilan joylashtiring)
 const IMAGES_DIR = path.join(__dirname, 'images');
 
-// Telegram: rasm caption (izoh) uzunligi 1024 belgidan oshsa, API xato
-// qaytaradi. Shu sababli uzun matnlarni caption sifatida EMAS, balki
-// rasmdan keyin alohida xabar sifatida yuboramiz.
-const TELEGRAM_CAPTION_LIMIT = 1024;
-
-// Rasm yuborish uchun maksimal kutish vaqti. Render <-> Telegram orasidagi
-// tarmoq sekin/beqaror bo'lsa (masalan "socket hang up"), standart so'rov
-// 60-90 soniyagacha osilib turishi mumkin — shu vaqt davomida foydalanuvchi
-// hech qanday javob olmay, "bot qotib qoldi" deb o'ylaydi. Shu sababli bu
-// yerda o'zimiz qisqaroq muddat belgilaymiz va vaqt tugasa, darhol matnga
-// o'tamiz.
-const PHOTO_SEND_TIMEOUT_MS = 12000;
-
-function withTimeout(promise, ms, label) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(label + ' ' + ms + 'ms ichida tugamadi (timeout)')), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
-// Rasm + HTML matn bilan xabar yuboradi. Agar rasm fayli topilmasa
-// (hali qo'yilmagan, nomi/harflari mos kelmagan bo'lsa), caption juda uzun
-// bo'lsa, yoki rasm yuborish belgilangan vaqtda tugamasa, matn alohida
-// xabar sifatida yuboriladi — shunda ham bot hech qachon "qotib qolmaydi",
-// foydalanuvchi doim tezda javob oladi.
+// Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
+// topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
+// bot rasm yo'qligi sababli yiqilib qolmaydi.
 async function sendStyled(ctx, imageFileName, htmlCaption) {
   const imgPath = path.join(IMAGES_DIR, imageFileName);
-  const exists = fs.existsSync(imgPath);
-
-  if (!exists) {
-    console.error(
-      '⚠️ Rasm topilmadi: ' + imgPath +
-      ' (fayl nomi katta-kichik harflarga sezgir, aniq mos kelishi kerak!)'
-    );
-    await ctx.replyWithHTML(htmlCaption);
-    return;
-  }
-
-  const canUseCaption = htmlCaption.length <= TELEGRAM_CAPTION_LIMIT;
-
-  try {
-    if (canUseCaption) {
-      // Qisqa matn — rasm ostida caption sifatida yuboriladi
-      await withTimeout(
-        ctx.replyWithPhoto(
-          { source: fs.createReadStream(imgPath) },
-          { caption: htmlCaption, parse_mode: 'HTML' }
-        ),
-        PHOTO_SEND_TIMEOUT_MS,
-        'Rasm (' + imageFileName + ') yuborish'
+  if (fs.existsSync(imgPath)) {
+    try {
+      await ctx.replyWithPhoto(
+        { source: fs.createReadStream(imgPath) },
+        { caption: htmlCaption, parse_mode: 'HTML' }
       );
-    } else {
-      // Uzun matn — avval to'liq matn (foydalanuvchi darhol o'qiy oladi),
-      // so'ng rasm alohida yuboriladi (rasm kechiksa ham matn kutib
-      // o'tirmaydi).
-      await ctx.replyWithHTML(htmlCaption);
-      await withTimeout(
-        ctx.replyWithPhoto({ source: fs.createReadStream(imgPath) }),
-        PHOTO_SEND_TIMEOUT_MS,
-        'Rasm (' + imageFileName + ') yuborish'
-      );
+      return;
+    } catch (e) {
+      console.error('Rasm yuborib bo\'lmadi (' + imageFileName + '):', e.message);
+      // rasm bilan xato bo'lsa ham matn borib yetsin
     }
-    return;
-  } catch (e) {
-    console.error(
-      'Rasm yuborib bo\'lmadi (' + imageFileName + '):',
-      e.message,
-      e.response ? JSON.stringify(e.response) : ''
-    );
-    // rasm bilan xato/timeout bo'lsa ham matn borib yetsin (agar hali
-    // yuborilmagan bo'lsa)
   }
-  if (canUseCaption) {
-    await ctx.replyWithHTML(htmlCaption);
-  }
+  await ctx.replyWithHTML(htmlCaption);
 }
 
 // ---------------------- SOZLAMALAR ----------------------
@@ -206,19 +148,13 @@ async function createOneTimeGroupLink(ctx, userId) {
 const bot = new Telegraf(BOT_TOKEN);
 
 // Har bir kanalda a'zolikni tekshirish
-const MEMBERSHIP_CHECK_TIMEOUT_MS = 10000;
-
 async function isMemberOfChannel(ctx, chatId, userId) {
   try {
-    const member = await withTimeout(
-      ctx.telegram.getChatMember(chatId, userId),
-      MEMBERSHIP_CHECK_TIMEOUT_MS,
-      'getChatMember (' + chatId + ')'
-    );
+    const member = await ctx.telegram.getChatMember(chatId, userId);
     return ['member', 'administrator', 'creator'].includes(member.status);
   } catch (e) {
     console.error('getChatMember xatolik (' + chatId + '), bot admin emasmi?:', e.message);
-    return false; // xatolik yoki timeout bo'lsa xavfsizlik uchun "a'zo emas" deb hisoblanadi
+    return false; // xatolik bo'lsa xavfsizlik uchun "a'zo emas" deb hisoblanadi
   }
 }
 
