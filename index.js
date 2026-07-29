@@ -7,9 +7,18 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const dns = require('dns');
 const { Telegraf } = require('telegraf');
 const express = require('express');
 const { MongoClient } = require('mongodb');
+
+// Ba'zi hostinglarda (Render, Railway va h.k.) IPv6 orqali chiquvchi
+// ulanishlar tez-tez "osilib qoladi" (ayniqsa rasm kabi katta so'rovlarda),
+// natijada bir necha o'nlab soniyadan keyin "socket hang up" bilan
+// uziladi. IPv4'ni ustuvor qilish bu muammoni deyarli bartaraf etadi.
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 // Rasmlar shu papkadan olinadi: /rasmlar/<fayl_nomi>
 // (loyihaning index.js bilan bir joyida "rasmlar" nomli papka yarating va
@@ -18,6 +27,20 @@ const IMAGES_DIR = path.join(__dirname, 'rasmlar');
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// So'rov "osilib qolsa" (masalan tarmoq muammosi tufayli hech qanday
+// javob ham, xato ham qaytmasa), uni cheksiz kutib o'tirmaslik uchun.
+// Eslatma: bu faqat KUTISHNI to'xtatadi — pastdagi HTTP so'rovning o'zi
+// fonda davom etishi mumkin, lekin bizga bu muhim emas, chunki qayta
+// urinib ko'ramiz.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(label + ' ' + ms + 'ms ichida javob bermadi')), ms)
+    ),
+  ]);
 }
 
 // Bir marta diskdan yuklangan rasmning Telegram file_id'sini xotirada
@@ -31,20 +54,24 @@ const photoFileIdCache = {};
 // Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
 // topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
 // bot rasm yo'qligi sababli yiqilib qolmaydi. Tarmoqdagi vaqtinchalik
-// xatoliklar (masalan "socket hang up") uchun bir necha marta qayta
-// urinib ko'radi, faqat shundan keyin matnga o'tadi.
+// xatoliklar (masalan "socket hang up" yoki osilib qolish) uchun bir
+// necha marta, har birini cheklangan vaqt ichida qayta urinib ko'radi,
+// faqat shundan keyin matnga o'tadi.
 async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
   const imgPath = path.join(IMAGES_DIR, imageFileName);
   const opts = extraOptions || {};
   const cachedFileId = photoFileIdCache[imageFileName];
+  const ATTEMPT_TIMEOUT_MS = 20000; // har bir urinish uchun 20 soniya
 
   // 1) Avval keshlangan file_id bilan urinib ko'ramiz — bu diskdan qayta
   //    o'qib, qayta yuklashdan ancha yengil va ishonchli.
   if (cachedFileId) {
     try {
-      await ctx.replyWithPhoto(cachedFileId, {
-        caption: htmlCaption, parse_mode: 'HTML', ...opts,
-      });
+      await withTimeout(
+        ctx.replyWithPhoto(cachedFileId, { caption: htmlCaption, parse_mode: 'HTML', ...opts }),
+        ATTEMPT_TIMEOUT_MS,
+        'file_id orqali yuborish'
+      );
       return;
     } catch (e) {
       console.error(
@@ -60,9 +87,13 @@ async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
     const MAX_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const sent = await ctx.replyWithPhoto(
-          { source: fs.createReadStream(imgPath) },
-          { caption: htmlCaption, parse_mode: 'HTML', ...opts }
+        const sent = await withTimeout(
+          ctx.replyWithPhoto(
+            { source: fs.createReadStream(imgPath) },
+            { caption: htmlCaption, parse_mode: 'HTML', ...opts }
+          ),
+          ATTEMPT_TIMEOUT_MS,
+          'Diskdan rasm yuborish'
         );
         // Muvaffaqiyatli yuklangach, file_id'ni keyingi safarlar uchun
         // keshlab qo'yamiz (eng katta o'lchamdagi versiyasi).
@@ -81,7 +112,7 @@ async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
           attempt + '/' + MAX_ATTEMPTS + ':', e.message
         );
         if (attempt < MAX_ATTEMPTS) {
-          await delay(1000 * attempt); // 1s, keyin 2s kutib qayta urinadi
+          await delay(1500); // qayta urinishdan oldin qisqa kutish
         }
         // oxirgi urinishdan keyin ham bo'lmasa, pastga tushib matn yuboriladi
       }
@@ -214,9 +245,10 @@ async function createOneTimeGroupLink(ctx, userId) {
 // ---------------------- BOT ----------------------
 // keepAlive + uzunroq timeout — ba'zi hostinglarda (masalan Render) rasm
 // kabi kattaroq fayllarni yuborayotganda vaqti-vaqti bilan chiqadigan
-// "socket hang up" xatoligini kamaytirish uchun.
+// "socket hang up" xatoligini kamaytirish uchun. family: 4 — IPv6 orqali
+// osilib qolishning oldini olish uchun IPv4'ni majburlaydi.
 const https = require('https');
-const telegramAgent = new https.Agent({ keepAlive: true, timeout: 60000 });
+const telegramAgent = new https.Agent({ keepAlive: true, timeout: 60000, family: 4 });
 
 const bot = new Telegraf(BOT_TOKEN, {
   telegram: { agent: telegramAgent },
