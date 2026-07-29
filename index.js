@@ -20,6 +20,25 @@ if (dns.setDefaultResultOrder) {
   dns.setDefaultResultOrder('ipv4first');
 }
 
+// MUHIM: Telegraf (Node 18+) tashqi so'rovlar uchun o'rnatilgan `fetch`
+// (undici) dan foydalanadi — pastdagi https.Agent sozlamalari faqat eski
+// `https` moduli ishlatilganda kuchga ega bo'ladi, undici uni butunlay
+// e'tiborsiz qoldiradi. Shuning uchun IPv4'ni va timeout'larni bevosita
+// undici'ning o'ziga berish kerak — aks holda "socket hang up" muammosi
+// hal bo'lmay qoladi.
+try {
+  const { Agent, setGlobalDispatcher } = require('undici');
+  setGlobalDispatcher(new Agent({
+    connect: { family: 4 },   // IPv6 orqali osilib qolishning oldini oladi
+    headersTimeout: 25_000,   // javob boshlanishini 25s dan ortiq kutmaydi
+    bodyTimeout: 25_000,      // javob tanasini 25s dan ortiq kutmaydi
+  }));
+  console.log('✅ undici global dispatcher sozlandi (IPv4 + timeout)');
+} catch (e) {
+  console.error("⚠️ undici sozlanmadi (paket topilmadi bo'lishi mumkin):", e.message);
+}
+
+
 // Rasmlar shu papkadan olinadi: /rasmlar/<fayl_nomi>
 // (loyihaning index.js bilan bir joyida "rasmlar" nomli papka yarating va
 // rasmlarni shu nomlar bilan joylashtiring)
