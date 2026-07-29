@@ -461,13 +461,17 @@ async function sendReferralLinkInfo(ctx, userId) {
   const refLink = 'https://t.me/' + me.username + '?start=' + userId;
 
   const linkText =
-    tgEmoji('paperclip', '📎') + ' Sizning referal havolangiz:\n' + refLink;
+    tgEmoji('paperclip', '📎') + ' Sizning referal havolangiz:\n' +
+    '<blockquote><b><i>' + refLink + '</i></b></blockquote>';
 
   const statsText =
     tgEmoji('people', '👥') + ' Taklif qilingan do\'stlar: ' + user.invitedCount + '/' + REQUIRED_REFERRALS;
 
   const warnText =
-    tgEmoji('exclaim', '⚠️') + " Muhim: ball olish uchun do'stingiz botga kirib, majburiy kanallarga a'zo bo'lishi kerak.";
+    tgEmoji('exclaim', '⚠️') + ' Muhim:\n' +
+    '<blockquote><b><i>' +
+    "Ball olish uchun do'stingiz botga kirib, majburiy kanallarga a'zo bo'lishi kerak." +
+    '</i></b></blockquote>';
 
   const ctaText =
     tgEmoji('down', '👇') + " Havolani do'stlaringizga hozir yuboring!";
@@ -509,8 +513,12 @@ async function creditReferrerIfNeeded(ctx, user, userId) {
           user.invitedBy,
           '🎉 Tabriklaymiz! Siz ' + REQUIRED_REFERRALS + " ta do'stingizni taklif qildingiz.\n\n" +
           "👉 Maxsus yopiq guruhga qo'shilish uchun shaxsan sizga mo'ljallangan " +
-          "bir martalik havola:\n" + link + "\n\n" +
-          "⚠️ Bu havola faqat 1 marta va faqat siz uchun ishlaydi."
+          "bir martalik havola:\n" +
+          '<blockquote><b><i>' + link + '</i></b></blockquote>\n' +
+          '<blockquote><b><i>' +
+          "⚠️ Bu havola faqat 1 marta va faqat siz uchun ishlaydi." +
+          '</i></b></blockquote>',
+          { parse_mode: 'HTML' }
         );
       } else {
         await ctx.telegram.sendMessage(
