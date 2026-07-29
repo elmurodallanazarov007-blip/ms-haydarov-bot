@@ -20,6 +20,14 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Bir marta diskdan yuklangan rasmning Telegram file_id'sini xotirada
+// saqlaymiz. Shu fayl keyingi safar yuborilganda, disk fayli qayta-qayta
+// yuklanmaydi (bu tugma har bosilganda bo'ladigan holat) — o'rniga
+// Telegram'ning o'zida saqlangan file_id ishlatiladi. Bu ham tezroq, ham
+// har safar butun faylni qayta yuklashdan kelib chiqadigan tarmoq
+// xatoliklarini ("socket hang up" kabi) sezilarli kamaytiradi.
+const photoFileIdCache = {};
+
 // Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
 // topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
 // bot rasm yo'qligi sababli yiqilib qolmaydi. Tarmoqdagi vaqtinchalik
@@ -28,14 +36,44 @@ function delay(ms) {
 async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
   const imgPath = path.join(IMAGES_DIR, imageFileName);
   const opts = extraOptions || {};
+  const cachedFileId = photoFileIdCache[imageFileName];
+
+  // 1) Avval keshlangan file_id bilan urinib ko'ramiz — bu diskdan qayta
+  //    o'qib, qayta yuklashdan ancha yengil va ishonchli.
+  if (cachedFileId) {
+    try {
+      await ctx.replyWithPhoto(cachedFileId, {
+        caption: htmlCaption, parse_mode: 'HTML', ...opts,
+      });
+      return;
+    } catch (e) {
+      console.error(
+        "Keshlangan file_id bilan yuborib bo'lmadi (" + imageFileName + '):',
+        e.message
+      );
+      delete photoFileIdCache[imageFileName];
+      // pastga tushib, diskdan qayta yuklashga urinamiz
+    }
+  }
+
   if (fs.existsSync(imgPath)) {
     const MAX_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        await ctx.replyWithPhoto(
+        const sent = await ctx.replyWithPhoto(
           { source: fs.createReadStream(imgPath) },
           { caption: htmlCaption, parse_mode: 'HTML', ...opts }
         );
+        // Muvaffaqiyatli yuklangach, file_id'ni keyingi safarlar uchun
+        // keshlab qo'yamiz (eng katta o'lchamdagi versiyasi).
+        try {
+          const photos = sent && sent.photo;
+          if (photos && photos.length) {
+            photoFileIdCache[imageFileName] = photos[photos.length - 1].file_id;
+          }
+        } catch (cacheErr) {
+          // keshlash muvaffaqiyatsiz bo'lsa ham muhim emas, xabar allaqachon ketdi
+        }
         return;
       } catch (e) {
         console.error(
