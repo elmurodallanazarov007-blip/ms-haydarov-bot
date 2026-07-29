@@ -39,6 +39,8 @@ try {
 }
 
 
+const https = require('https');
+
 // Rasmlar shu papkadan olinadi: /rasmlar/<fayl_nomi>
 // (loyihaning index.js bilan bir joyida "rasmlar" nomli papka yarating va
 // rasmlarni shu nomlar bilan joylashtiring)
@@ -48,49 +50,118 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// So'rov "osilib qolsa" (masalan tarmoq muammosi tufayli hech qanday
-// javob ham, xato ham qaytmasa), uni cheksiz kutib o'tirmaslik uchun.
-// Eslatma: bu faqat KUTISHNI to'xtatadi — pastdagi HTTP so'rovning o'zi
-// fonda davom etishi mumkin, lekin bizga bu muhim emas, chunki qayta
-// urinib ko'ramiz.
-function withTimeout(promise, ms, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(label + ' ' + ms + 'ms ichida javob bermadi')), ms)
-    ),
-  ]);
+// MUHIM: sendPhoto so'rovlari Telegraf/undici orqali osilib qolayotgani
+// aniqlandi (hech qanday xato ham, javob ham qaytmaydi). Shuning uchun
+// FAQAT rasm yuborish uchun klassik Node `https` moduli orqali
+// to'g'ridan-to'g'ri Telegram Bot API'ga so'rov yuboramiz — bu Telegraf'ning
+// muammoli fetch/undici transportini butunlay chetlab o'tadi (xuddi
+// node-telegram-bot-api kabi klassik http(s) ishlatadi).
+function sendPhotoRaw({ chatId, filePath, fileId, caption, replyMarkup, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const token = process.env.BOT_TOKEN;
+    const boundary = '----MSHBoundary' + Date.now() + Math.random().toString(16).slice(2);
+    const textFields = { chat_id: String(chatId) };
+    if (caption) textFields.caption = caption;
+    textFields.parse_mode = 'HTML';
+    if (replyMarkup) textFields.reply_markup = JSON.stringify(replyMarkup);
+
+    const parts = [];
+    for (const [key, value] of Object.entries(textFields)) {
+      parts.push(Buffer.from(
+        '--' + boundary + '\r\n' +
+        'Content-Disposition: form-data; name="' + key + '"\r\n\r\n' +
+        value + '\r\n'
+      ));
+    }
+
+    if (fileId) {
+      parts.push(Buffer.from(
+        '--' + boundary + '\r\n' +
+        'Content-Disposition: form-data; name="photo"\r\n\r\n' +
+        fileId + '\r\n'
+      ));
+    } else if (filePath) {
+      const fileBuffer = fs.readFileSync(filePath);
+      const filename = path.basename(filePath);
+      parts.push(Buffer.from(
+        '--' + boundary + '\r\n' +
+        'Content-Disposition: form-data; name="photo"; filename="' + filename + '"\r\n' +
+        'Content-Type: image/jpeg\r\n\r\n'
+      ));
+      parts.push(fileBuffer);
+      parts.push(Buffer.from('\r\n'));
+    } else {
+      reject(new Error('sendPhotoRaw: filePath yoki fileId berilishi shart'));
+      return;
+    }
+    parts.push(Buffer.from('--' + boundary + '--\r\n'));
+
+    const body = Buffer.concat(parts);
+
+    const req = https.request({
+      hostname: 'api.telegram.org',
+      path: '/bot' + token + '/sendPhoto',
+      method: 'POST',
+      family: 4, // IPv6 orqali osilib qolishning oldini olish uchun IPv4 majburlanadi
+      headers: {
+        'Content-Type': 'multipart/form-data; boundary=' + boundary,
+        'Content-Length': body.length,
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.ok) {
+            resolve(parsed.result);
+          } else {
+            reject(new Error('Telegram API xatosi: ' + (parsed.description || data)));
+          }
+        } catch (e) {
+          reject(new Error("Javobni o'qib bo'lmadi: " + e.message));
+        }
+      });
+    });
+
+    if (timeoutMs) {
+      req.setTimeout(timeoutMs, () => {
+        req.destroy(new Error('So\'rov ' + timeoutMs + 'ms ichida javob bermadi (timeout)'));
+      });
+    }
+
+    req.on('error', (err) => reject(err));
+    req.write(body);
+    req.end();
+  });
 }
 
 // Bir marta diskdan yuklangan rasmning Telegram file_id'sini xotirada
 // saqlaymiz. Shu fayl keyingi safar yuborilganda, disk fayli qayta-qayta
 // yuklanmaydi (bu tugma har bosilganda bo'ladigan holat) — o'rniga
-// Telegram'ning o'zida saqlangan file_id ishlatiladi. Bu ham tezroq, ham
-// har safar butun faylni qayta yuklashdan kelib chiqadigan tarmoq
-// xatoliklarini ("socket hang up" kabi) sezilarli kamaytiradi.
+// Telegram'ning o'zida saqlangan file_id ishlatiladi.
 const photoFileIdCache = {};
 
 // Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
 // topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
-// bot rasm yo'qligi sababli yiqilib qolmaydi. Tarmoqdagi vaqtinchalik
-// xatoliklar (masalan "socket hang up" yoki osilib qolish) uchun bir
-// necha marta, har birini cheklangan vaqt ichida qayta urinib ko'radi,
-// faqat shundan keyin matnga o'tadi.
+// bot rasm yo'qligi sababli yiqilib qolmaydi. Rasm klassik https orqali
+// (Telegraf/undici'ni chetlab o'tib) yuboriladi; vaqtinchalik xatolik
+// bo'lsa bir necha marta qayta urinadi, faqat shundan keyin matnga o'tadi.
 async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
   const imgPath = path.join(IMAGES_DIR, imageFileName);
   const opts = extraOptions || {};
+  const replyMarkup = opts.reply_markup;
+  const chatId = ctx.chat && ctx.chat.id ? ctx.chat.id : ctx.from.id;
   const cachedFileId = photoFileIdCache[imageFileName];
-  const ATTEMPT_TIMEOUT_MS = 20000; // har bir urinish uchun 20 soniya
+  const ATTEMPT_TIMEOUT_MS = 20000;
 
-  // 1) Avval keshlangan file_id bilan urinib ko'ramiz — bu diskdan qayta
-  //    o'qib, qayta yuklashdan ancha yengil va ishonchli.
+  // 1) Avval keshlangan file_id bilan urinib ko'ramiz.
   if (cachedFileId) {
     try {
-      await withTimeout(
-        ctx.replyWithPhoto(cachedFileId, { caption: htmlCaption, parse_mode: 'HTML', ...opts }),
-        ATTEMPT_TIMEOUT_MS,
-        'file_id orqali yuborish'
-      );
+      await sendPhotoRaw({
+        chatId, fileId: cachedFileId, caption: htmlCaption, replyMarkup,
+        timeoutMs: ATTEMPT_TIMEOUT_MS,
+      });
       return;
     } catch (e) {
       console.error(
@@ -98,7 +169,6 @@ async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
         e.message
       );
       delete photoFileIdCache[imageFileName];
-      // pastga tushib, diskdan qayta yuklashga urinamiz
     }
   }
 
@@ -106,16 +176,10 @@ async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
     const MAX_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const sent = await withTimeout(
-          ctx.replyWithPhoto(
-            { source: fs.createReadStream(imgPath) },
-            { caption: htmlCaption, parse_mode: 'HTML', ...opts }
-          ),
-          ATTEMPT_TIMEOUT_MS,
-          'Diskdan rasm yuborish'
-        );
-        // Muvaffaqiyatli yuklangach, file_id'ni keyingi safarlar uchun
-        // keshlab qo'yamiz (eng katta o'lchamdagi versiyasi).
+        const sent = await sendPhotoRaw({
+          chatId, filePath: imgPath, caption: htmlCaption, replyMarkup,
+          timeoutMs: ATTEMPT_TIMEOUT_MS,
+        });
         try {
           const photos = sent && sent.photo;
           if (photos && photos.length) {
@@ -131,9 +195,8 @@ async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
           attempt + '/' + MAX_ATTEMPTS + ':', e.message
         );
         if (attempt < MAX_ATTEMPTS) {
-          await delay(1500); // qayta urinishdan oldin qisqa kutish
+          await delay(1500);
         }
-        // oxirgi urinishdan keyin ham bo'lmasa, pastga tushib matn yuboriladi
       }
     }
   }
@@ -265,8 +328,9 @@ async function createOneTimeGroupLink(ctx, userId) {
 // keepAlive + uzunroq timeout — ba'zi hostinglarda (masalan Render) rasm
 // kabi kattaroq fayllarni yuborayotganda vaqti-vaqti bilan chiqadigan
 // "socket hang up" xatoligini kamaytirish uchun. family: 4 — IPv6 orqali
-// osilib qolishning oldini olish uchun IPv4'ni majburlaydi.
-const https = require('https');
+// osilib qolishning oldini olish uchun IPv4'ni majburlaydi. (Eslatma:
+// rasm yuborish endi bu agentdan mustaqil, alohida klassik https orqali
+// amalga oshadi — yuqoridagi sendPhotoRaw funksiyasiga qarang.)
 const telegramAgent = new https.Agent({ keepAlive: true, timeout: 60000, family: 4 });
 
 const bot = new Telegraf(BOT_TOKEN, {
