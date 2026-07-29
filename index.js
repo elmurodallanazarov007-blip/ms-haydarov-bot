@@ -11,21 +11,22 @@ const { Telegraf } = require('telegraf');
 const express = require('express');
 const { MongoClient } = require('mongodb');
 
-// Rasmlar shu papkadan olinadi: /images/<fayl_nomi>
-// (loyihaning index.js bilan bir joyida "images" nomli papka yarating va
+// Rasmlar shu papkadan olinadi: /rasmlar/<fayl_nomi>
+// (loyihaning index.js bilan bir joyida "rasmlar" nomli papka yarating va
 // rasmlarni shu nomlar bilan joylashtiring)
-const IMAGES_DIR = path.join(__dirname, 'images');
+const IMAGES_DIR = path.join(__dirname, 'rasmlar');
 
 // Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
 // topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
 // bot rasm yo'qligi sababli yiqilib qolmaydi.
-async function sendStyled(ctx, imageFileName, htmlCaption) {
+async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
   const imgPath = path.join(IMAGES_DIR, imageFileName);
+  const opts = extraOptions || {};
   if (fs.existsSync(imgPath)) {
     try {
       await ctx.replyWithPhoto(
         { source: fs.createReadStream(imgPath) },
-        { caption: htmlCaption, parse_mode: 'HTML' }
+        { caption: htmlCaption, parse_mode: 'HTML', ...opts }
       );
       return;
     } catch (e) {
@@ -33,7 +34,7 @@ async function sendStyled(ctx, imageFileName, htmlCaption) {
       // rasm bilan xato bo'lsa ham matn borib yetsin
     }
   }
-  await ctx.replyWithHTML(htmlCaption);
+  await ctx.replyWithHTML(htmlCaption, opts);
 }
 
 // ---------------------- SOZLAMALAR ----------------------
@@ -239,13 +240,29 @@ function tgEmoji(key, emoji) {
   return id ? '<tg-emoji emoji-id="' + id + '">' + emoji + '</tg-emoji>' : emoji;
 }
 
-// Har bir qism alohida xabar sifatida yuboriladi (kelajakda har biriga
-// alohida rasm biriktirish uchun ham shu tarzda qulay).
-async function sendReferralInfo(ctx, userId) {
-  const user = await getUser(userId);
-  const me = await ctx.telegram.getMe();
-  const refLink = 'https://t.me/' + me.username + '?start=' + userId;
+// "Havolani olish" tugmasi — intro xabari ostida chiqadi, bosilganda
+// referal havola xabari (statistika bilan) yuboriladi. style ko'rsatilmasa
+// tugma shaffof (standart kulrang) bo'lib chiqadi.
+const GET_LINK_BUTTON_TEXT = 'Havolani olish';
+const GET_LINK_CALLBACK = 'get_ref_link';
+const GET_LINK_EMOJI_ID = '5271604874419647061';
 
+function buildGetLinkKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: GET_LINK_BUTTON_TEXT,
+          callback_data: GET_LINK_CALLBACK,
+          style: 'success',
+          icon_custom_emoji_id: GET_LINK_EMOJI_ID,
+        },
+      ],
+    ],
+  };
+}
+
+async function sendReferralIntro(ctx, userId) {
   const introText =
     tgEmoji('party', '🎉') + ' Tabriklaymiz, obuna tasdiqlandi!\n\n' +
     tgEmoji('check', '✅') + " Matematikadan A+ olish uchun bepul tayyorlanish imkoniyati sizda!\n" +
@@ -255,6 +272,16 @@ async function sendReferralInfo(ctx, userId) {
     tgEmoji('target', '🎯') + ' ' + REQUIRED_REFERRALS + " ta matematik do'st taklif qilsangiz:\n" +
     tgEmoji('fire', '🔥') + " Bot sizga avtomatik tarzda Yopiq guruh havolasini beradi!\n" +
     tgEmoji('sparkles', '✨') + " Imkoniyatni qo'ldan boy bermang!";
+
+  await sendStyled(ctx, 'referral-intro.jpg', introText, {
+    reply_markup: buildGetLinkKeyboard(),
+  });
+}
+
+async function sendReferralLinkInfo(ctx, userId) {
+  const user = await getUser(userId);
+  const me = await ctx.telegram.getMe();
+  const refLink = 'https://t.me/' + me.username + '?start=' + userId;
 
   const linkText =
     tgEmoji('paperclip', '📎') + ' Sizning referal havolangiz:\n' + refLink;
@@ -274,8 +301,13 @@ async function sendReferralInfo(ctx, userId) {
     warnText + '\n' +
     ctaText;
 
-  await sendStyled(ctx, 'referral-intro.jpg', introText);
-  await sendStyled(ctx, 'referral-info.jpg', infoText);
+  await sendStyled(ctx, 'referal-havolangiz.jpg', infoText);
+}
+
+// Har bir qism alohida xabar sifatida yuboriladi (kelajakda har biriga
+// alohida rasm biriktirish uchun ham shu tarzda qulay).
+async function sendReferralInfo(ctx, userId) {
+  await sendReferralIntro(ctx, userId);
 }
 
 async function creditReferrerIfNeeded(ctx, user, userId) {
@@ -379,6 +411,12 @@ bot.action('check_sub', async (ctx) => {
   }
 
   await sendReferralInfo(ctx, userId);
+});
+
+bot.action(GET_LINK_CALLBACK, async (ctx) => {
+  const userId = ctx.from.id;
+  await ctx.answerCbQuery();
+  await sendReferralLinkInfo(ctx, userId);
 });
 
 bot.command('mystats', async (ctx) => {
