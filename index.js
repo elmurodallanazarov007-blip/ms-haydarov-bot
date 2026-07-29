@@ -16,22 +16,37 @@ const { MongoClient } = require('mongodb');
 // rasmlarni shu nomlar bilan joylashtiring)
 const IMAGES_DIR = path.join(__dirname, 'rasmlar');
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
 // topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
-// bot rasm yo'qligi sababli yiqilib qolmaydi.
+// bot rasm yo'qligi sababli yiqilib qolmaydi. Tarmoqdagi vaqtinchalik
+// xatoliklar (masalan "socket hang up") uchun bir necha marta qayta
+// urinib ko'radi, faqat shundan keyin matnga o'tadi.
 async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
   const imgPath = path.join(IMAGES_DIR, imageFileName);
   const opts = extraOptions || {};
   if (fs.existsSync(imgPath)) {
-    try {
-      await ctx.replyWithPhoto(
-        { source: fs.createReadStream(imgPath) },
-        { caption: htmlCaption, parse_mode: 'HTML', ...opts }
-      );
-      return;
-    } catch (e) {
-      console.error('Rasm yuborib bo\'lmadi (' + imageFileName + '):', e.message);
-      // rasm bilan xato bo'lsa ham matn borib yetsin
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await ctx.replyWithPhoto(
+          { source: fs.createReadStream(imgPath) },
+          { caption: htmlCaption, parse_mode: 'HTML', ...opts }
+        );
+        return;
+      } catch (e) {
+        console.error(
+          'Rasm yuborib bo\'lmadi (' + imageFileName + '), urinish ' +
+          attempt + '/' + MAX_ATTEMPTS + ':', e.message
+        );
+        if (attempt < MAX_ATTEMPTS) {
+          await delay(1000 * attempt); // 1s, keyin 2s kutib qayta urinadi
+        }
+        // oxirgi urinishdan keyin ham bo'lmasa, pastga tushib matn yuboriladi
+      }
     }
   }
   await ctx.replyWithHTML(htmlCaption, opts);
@@ -159,7 +174,16 @@ async function createOneTimeGroupLink(ctx, userId) {
 }
 
 // ---------------------- BOT ----------------------
-const bot = new Telegraf(BOT_TOKEN);
+// keepAlive + uzunroq timeout — ba'zi hostinglarda (masalan Render) rasm
+// kabi kattaroq fayllarni yuborayotganda vaqti-vaqti bilan chiqadigan
+// "socket hang up" xatoligini kamaytirish uchun.
+const https = require('https');
+const telegramAgent = new https.Agent({ keepAlive: true, timeout: 60000 });
+
+const bot = new Telegraf(BOT_TOKEN, {
+  telegram: { agent: telegramAgent },
+  handlerTimeout: 90_000,
+});
 
 // Har bir kanalda a'zolikni tekshirish
 async function isMemberOfChannel(ctx, chatId, userId) {
@@ -416,6 +440,14 @@ bot.action('check_sub', async (ctx) => {
 bot.action(GET_LINK_CALLBACK, async (ctx) => {
   const userId = ctx.from.id;
   await ctx.answerCbQuery();
+
+  try {
+    await ctx.deleteMessage();
+  } catch (e) {
+    console.error("Intro xabarini o'chirib bo'lmadi:", e.message);
+    // O'chirib bo'lmasa ham (masalan 48 soatdan o'tgan bo'lsa), davom etamiz
+  }
+
   await sendReferralLinkInfo(ctx, userId);
 });
 
