@@ -571,15 +571,15 @@ bot.start(async (ctx) => {
   await sendReferralInfo(ctx, userId);
 });
 
+
 // ==========================================
-// YANGI: BARCHA A'ZOLARGA XABAR YUBORISH (BROADCAST)
+// YANGI: BARCHA A'ZOLARGA XABAR YUBORISH (BACKGROUND TASK)
 // ==========================================
 bot.command('sendall', async (ctx) => {
   const userId = String(ctx.from.id);
   
-  // Faqat ADMIN_IDS ruxsat berilganlar ishlata oladi
   if (!ADMIN_IDS.includes(userId)) {
-    return; // Agar admin bo'lmasa, bot indamay qoladi
+    return;
   }
 
   const replyTo = ctx.message.reply_to_message;
@@ -587,34 +587,43 @@ bot.command('sendall', async (ctx) => {
     return ctx.reply("⚠️ Xatolik: Iltimos, tarqatmoqchi bo'lgan xabaringizga reply (javob) qilib /sendall komandasini yuboring.");
   }
 
-  // Barcha foydalanuvchilarni bazadan olish
   const users = await usersCollection.find({}).toArray();
   const totalUsers = users.length;
 
-  await ctx.reply(`Barcha ${totalUsers} ta foydalanuvchiga xabar yuborish boshlandi...\nIltimos, botni qayta ishga tushirmang. Bu biroz vaqt oladi.`);
+  // Telegram uzib qo'ymasligi uchun darhol javob beramiz
+  await ctx.reply(`🚀 Barcha ${totalUsers} ta foydalanuvchiga xabar yuborish boshlandi...\n\nBu jarayon orqa fonda (background) ishlaydi. Botdan bemalol foydalanavering, tarqatib bo'lgach bot o'zi sizga hisobot yuboradi.`);
 
-  let successCount = 0;
-  let failCount = 0;
+  // Xabar tarqatish tsiklini Asinxron IIFE (Mustaqil funksiya) ichida ishga tushiramiz.
+  // Bu kod asosiy oqimni ushlab turmaydi va Telegram qayta urinishlarini to'xtatadi.
+  (async () => {
+    let successCount = 0;
+    let failCount = 0;
 
-  for (const user of users) {
-    try {
-      // copyMessage - har qanday turdagi xabarni (rasm, video, premium emoji, formatlar) 
-      // yuboruvchidan nusxalab, foydalanuvchiga yuboradi.
-      await ctx.telegram.copyMessage(user.userId, ctx.chat.id, replyTo.message_id);
-      successCount++;
-    } catch (error) {
-      // Agar foydalanuvchi botni bloklagan bo'lsa xatolik beradi, uni e'tiborsiz qoldiramiz.
-      failCount++;
+    for (const user of users) {
+      try {
+        await ctx.telegram.copyMessage(user.userId, ctx.chat.id, replyTo.message_id);
+        successCount++;
+      } catch (error) {
+        failCount++;
+      }
+      
+      // Limitga tushmaslik uchun 50ms kutish (sekundiga taxminan 20 ta xabar)
+      await delay(50);
     }
 
-    // Telegram API limitlariga tushib qolmaslik (429 xatosi olmaslik) 
-    // uchun har bir xabardan so'ng kamida 50ms kutamiz (~20ta xabar/sekund)
-    await delay(50);
-  }
-
-  await ctx.reply(`✅ Xabar muvaffaqiyatli tarqatildi!\n\n📈 Statistika:\nYetib bordi: ${successCount} ta\nBloklagan / O'chirilgan: ${failCount} ta`);
+    // Jarayon to'liq tugagach, admin ga natijani yuborish
+    try {
+      await ctx.telegram.sendMessage(
+        ctx.chat.id,
+        `✅ Xabar tarqatish to'liq yakunlandi!\n\n📈 Statistika:\n👥 Jami urinishlar: ${totalUsers} ta\n✅ Yetib bordi: ${successCount} ta\n❌ Bloklagan yoki o'chirilgan: ${failCount} ta`
+      );
+    } catch (e) {
+      console.error("Adminga hisobot yuborib bo'lmadi:", e.message);
+    }
+  })();
 });
 // ==========================================
+
 
 bot.action('check_sub', async (ctx) => {
   const userId = ctx.from.id;
