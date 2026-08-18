@@ -505,10 +505,9 @@ bot.start(async (ctx) => {
 
 
 // ==========================================
-// YANGI: BARCHA A'ZOLARGA XABAR YUBORISH (STOP TUGMASI BILAN)
+// YANGI: BARCHA A'ZOLARGA XABAR YUBORISH (NOYOB FILTR BILAN)
 // ==========================================
 
-// Global o'zgaruvchi: Xabar tarqatish holatini nazorat qilish uchun
 const broadcastState = {
   isActive: false,
   shouldStop: false,
@@ -521,7 +520,6 @@ bot.command('sendall', async (ctx) => {
     return;
   }
 
-  // Agar allaqachon jarayon ketayotgan bo'lsa
   if (broadcastState.isActive) {
     return ctx.reply("⚠️ Ayni paytda boshqa xabar tarqatish jarayoni ketmoqda. Iltimos, u tugashini kuting yoki uni to'xtating.");
   }
@@ -531,15 +529,28 @@ bot.command('sendall', async (ctx) => {
     return ctx.reply("⚠️ Xatolik: Iltimos, tarqatmoqchi bo'lgan xabaringizga reply (javob) qilib /sendall komandasini yuboring.");
   }
 
-  const users = await usersCollection.find({}).toArray();
-  const totalUsers = users.length;
+  // 1. Bazadagi barcha odamlarni olamiz
+  const allUsers = await usersCollection.find({}).toArray();
+  
+  // 2. Takrorlanishlarning oldini olish uchun faqat noyob (unique) ID larni ajratib olamiz
+  const uniqueUsers = [];
+  const processedIds = new Set();
+  
+  for (const u of allUsers) {
+    const idString = String(u.userId);
+    if (!processedIds.has(idString)) {
+      uniqueUsers.push(u);
+      processedIds.add(idString);
+    }
+  }
 
-  // Jarayonni boshlash
+  const totalUsers = uniqueUsers.length;
+
   broadcastState.isActive = true;
   broadcastState.shouldStop = false;
 
   const statusMsg = await ctx.reply(
-    `🚀 Barcha ${totalUsers} ta foydalanuvchiga xabar yuborish boshlandi...\n\nBu jarayon orqa fonda ishlaydi. Istalgan vaqtda to'xtatishingiz mumkin.`,
+    `🚀 Barcha ${totalUsers} ta takrorlanmas foydalanuvchiga xabar yuborish boshlandi...\n\nBu jarayon orqa fonda ishlaydi. Istalgan vaqtda to'xtatishingiz mumkin.`,
     {
       reply_markup: {
         inline_keyboard: [
@@ -554,8 +565,8 @@ bot.command('sendall', async (ctx) => {
     let failCount = 0;
     let isStoppedByUser = false;
 
-    for (const user of users) {
-      // Agar admin to'xtatish tugmasini bosgan bo'lsa, siklni uzamiz
+    // 3. Faqat noyob qilingan ro'yxat bo'yicha aylanamiz
+    for (const user of uniqueUsers) {
       if (broadcastState.shouldStop) {
         isStoppedByUser = true;
         break;
@@ -571,12 +582,10 @@ bot.command('sendall', async (ctx) => {
       await delay(50);
     }
 
-    // Sikl tugadi (yoki to'xtatildi)
     broadcastState.isActive = false;
     broadcastState.shouldStop = false;
 
     try {
-      // To'xtatish tugmasini o'chirib tashlaymiz
       await ctx.telegram.editMessageReplyMarkup(ctx.chat.id, statusMsg.message_id, undefined, { inline_keyboard: [] });
 
       const finalStatusText = isStoppedByUser 
@@ -593,7 +602,6 @@ bot.command('sendall', async (ctx) => {
   })();
 });
 
-// To'xtatish tugmasi bosilganda ishlaydigan harakat
 bot.action('stop_broadcast', async (ctx) => {
   const userId = String(ctx.from.id);
   
