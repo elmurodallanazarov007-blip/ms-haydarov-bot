@@ -217,6 +217,10 @@ if (!MONGODB_URI) {
 }
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'ms_haydarov_bot';
 
+// BARCHA XABARNI YUBORA OLADIGAN ADMINLAR RO'YXATI
+// .env faylida ADMIN_IDS=12345678,87654321 ko'rinishida saqlang
+const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(id => id.trim());
+
 // Majburiy obuna kanallari — bot ikkalasida ham ADMIN bo'lishi SHART
 const CHANNELS = [
   {
@@ -566,6 +570,51 @@ bot.start(async (ctx) => {
   }
   await sendReferralInfo(ctx, userId);
 });
+
+// ==========================================
+// YANGI: BARCHA A'ZOLARGA XABAR YUBORISH (BROADCAST)
+// ==========================================
+bot.command('sendall', async (ctx) => {
+  const userId = String(ctx.from.id);
+  
+  // Faqat ADMIN_IDS ruxsat berilganlar ishlata oladi
+  if (!ADMIN_IDS.includes(userId)) {
+    return; // Agar admin bo'lmasa, bot indamay qoladi
+  }
+
+  const replyTo = ctx.message.reply_to_message;
+  if (!replyTo) {
+    return ctx.reply("⚠️ Xatolik: Iltimos, tarqatmoqchi bo'lgan xabaringizga reply (javob) qilib /sendall komandasini yuboring.");
+  }
+
+  // Barcha foydalanuvchilarni bazadan olish
+  const users = await usersCollection.find({}).toArray();
+  const totalUsers = users.length;
+
+  await ctx.reply(`Barcha ${totalUsers} ta foydalanuvchiga xabar yuborish boshlandi...\nIltimos, botni qayta ishga tushirmang. Bu biroz vaqt oladi.`);
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const user of users) {
+    try {
+      // copyMessage - har qanday turdagi xabarni (rasm, video, premium emoji, formatlar) 
+      // yuboruvchidan nusxalab, foydalanuvchiga yuboradi.
+      await ctx.telegram.copyMessage(user.userId, ctx.chat.id, replyTo.message_id);
+      successCount++;
+    } catch (error) {
+      // Agar foydalanuvchi botni bloklagan bo'lsa xatolik beradi, uni e'tiborsiz qoldiramiz.
+      failCount++;
+    }
+
+    // Telegram API limitlariga tushib qolmaslik (429 xatosi olmaslik) 
+    // uchun har bir xabardan so'ng kamida 50ms kutamiz (~20ta xabar/sekund)
+    await delay(50);
+  }
+
+  await ctx.reply(`✅ Xabar muvaffaqiyatli tarqatildi!\n\n📈 Statistika:\nYetib bordi: ${successCount} ta\nBloklagan / O'chirilgan: ${failCount} ta`);
+});
+// ==========================================
 
 bot.action('check_sub', async (ctx) => {
   const userId = ctx.from.id;
