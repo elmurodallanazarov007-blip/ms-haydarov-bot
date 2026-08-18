@@ -136,17 +136,8 @@ function sendPhotoRaw({ chatId, filePath, fileId, caption, replyMarkup, timeoutM
   });
 }
 
-// Bir marta diskdan yuklangan rasmning Telegram file_id'sini xotirada
-// saqlaymiz. Shu fayl keyingi safar yuborilganda, disk fayli qayta-qayta
-// yuklanmaydi (bu tugma har bosilganda bo'ladigan holat) — o'rniga
-// Telegram'ning o'zida saqlangan file_id ishlatiladi.
 const photoFileIdCache = {};
 
-// Rasm + HTML matn (caption) bilan xabar yuboradi. Agar rasm fayli
-// topilmasa (hali qo'yilmagan bo'lsa), oddiy matnli xabar yuboradi —
-// bot rasm yo'qligi sababli yiqilib qolmaydi. Rasm klassik https orqali
-// (Telegraf/undici'ni chetlab o'tib) yuboriladi; vaqtinchalik xatolik
-// bo'lsa bir necha marta qayta urinadi, faqat shundan keyin matnga o'tadi.
 async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
   const imgPath = path.join(IMAGES_DIR, imageFileName);
   const opts = extraOptions || {};
@@ -155,7 +146,6 @@ async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
   const cachedFileId = photoFileIdCache[imageFileName];
   const ATTEMPT_TIMEOUT_MS = 20000;
 
-  // 1) Avval keshlangan file_id bilan urinib ko'ramiz.
   if (cachedFileId) {
     try {
       await sendPhotoRaw({
@@ -164,10 +154,6 @@ async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
       });
       return;
     } catch (e) {
-      console.error(
-        "Keshlangan file_id bilan yuborib bo'lmadi (" + imageFileName + '):',
-        e.message
-      );
       delete photoFileIdCache[imageFileName];
     }
   }
@@ -185,15 +171,9 @@ async function sendStyled(ctx, imageFileName, htmlCaption, extraOptions) {
           if (photos && photos.length) {
             photoFileIdCache[imageFileName] = photos[photos.length - 1].file_id;
           }
-        } catch (cacheErr) {
-          // keshlash muvaffaqiyatsiz bo'lsa ham muhim emas, xabar allaqachon ketdi
-        }
+        } catch (cacheErr) {}
         return;
       } catch (e) {
-        console.error(
-          'Rasm yuborib bo\'lmadi (' + imageFileName + '), urinish ' +
-          attempt + '/' + MAX_ATTEMPTS + ':', e.message
-        );
         if (attempt < MAX_ATTEMPTS) {
           await delay(1500);
         }
@@ -218,57 +198,42 @@ if (!MONGODB_URI) {
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'ms_haydarov_bot';
 
 // BARCHA XABARNI YUBORA OLADIGAN ADMINLAR RO'YXATI
-// .env faylida ADMIN_IDS=12345678,87654321 ko'rinishida saqlang
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(id => id.trim());
 
-// Majburiy obuna kanallari — bot ikkalasida ham ADMIN bo'lishi SHART
+// Majburiy obuna kanallari
 const CHANNELS = [
   {
     label: '1-kanal: Matematika milliy sertifikatim',
     url: process.env.CHANNEL_1_LINK || 'https://t.me/Matematika_milliysertifikatim',
     chatId: process.env.CHANNEL_1 || '@Matematika_milliysertifikatim',
-    style: 'primary', // ko'k
+    style: 'primary',
     emojiId: process.env.EMOJI_BLUE_ID || '5424998072323185646',
   },
   {
     label: '2-kanal: Talim Talaba',
     url: process.env.CHANNEL_2_LINK || 'https://t.me/talimtalaba',
     chatId: process.env.CHANNEL_2 || '@talimtalaba',
-    style: 'success', // yashil
+    style: 'success', 
     emojiId: process.env.EMOJI_GREEN_ID || '5451880684945708278',
   },
 ];
 
-const CONFIRM_STYLE = 'danger'; // qizil
+const CONFIRM_STYLE = 'danger'; 
 const CONFIRM_EMOJI_ID = process.env.EMOJI_RED_ID || '5273805757396031980';
 
-// Instagram sahifasi — MUHIM: Telegram Bot API orqali Instagram'dagi
-// obunani (follow'ni) TEKSHIRISH IMKONI YO'Q. getChatMember faqat
-// Telegram kanallari/guruhlari uchun ishlaydi, Instagram uchun bunday
-// API yo'q. Shu sababli bu tugma foydalanuvchiga ko'rsatiladi va
-// "majburiy" sifatida talab qilinadi, lekin bot buni avtomatik
-// tasdiqlay olmaydi — foydalanuvchi "Tasdiqlash" bosganda faqat
-// Telegram kanallari tekshiriladi.
 const INSTAGRAM_LINK = process.env.INSTAGRAM_LINK ||
   'https://www.instagram.com/matematika_ms_?igsh=d2Q0czZscGprMXZ5';
 const INSTAGRAM_LABEL = '📸 Instagram sahifamiz';
-const INSTAGRAM_STYLE = 'danger'; // qizil (shaffof)
+const INSTAGRAM_STYLE = 'danger'; 
 const INSTAGRAM_EMOJI_ID = process.env.EMOJI_INSTAGRAM_ID || '5226905513387631634';
 
-// Referal uchun kerakli odamlar soni
 const REQUIRED_REFERRALS = parseInt(process.env.REQUIRED_REFERRALS || '5', 10);
-
-// Maxsus yopiq guruh — bot shu guruhda ADMIN bo'lishi va "Invite users via
-// link" huquqiga ega bo'lishi SHART. Bu yerga guruhning chat ID'si yoziladi
-// (masalan -1001234567890), username emas — chunki bir martalik havola
-// yaratish uchun aniq chat ID kerak.
 const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID;
 
-// Webhook uchun (Render'da ishlatiladi)
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const PORT = process.env.PORT || 3000;
 
-// ---------------------- MA'LUMOTLAR BAZASI (MongoDB Atlas) ----------------------
+// ---------------------- MA'LUMOTLAR BAZASI ----------------------
 let usersCollection = null;
 
 async function connectDB() {
@@ -276,12 +241,10 @@ async function connectDB() {
   await client.connect();
   const db = client.db(MONGODB_DB_NAME);
   usersCollection = db.collection('users');
-  // userId bo'yicha tez qidirish uchun index (allaqachon bo'lsa ham xato bermaydi)
   await usersCollection.createIndex({ userId: 1 }, { unique: true });
   console.log('✅ MongoDB Atlas ulandi (' + MONGODB_DB_NAME + ')');
 }
 
-// Foydalanuvchini bazadan olish, topilmasa yangisini yaratish
 async function getUser(userId) {
   const id = String(userId);
   let user = await usersCollection.findOne({ userId: id });
@@ -299,9 +262,8 @@ async function getUser(userId) {
   return user;
 }
 
-// Foydalanuvchi obyektini bazaga yozish (upsert)
 async function saveUser(user) {
-  const { _id, ...rest } = user; // _id ni o'zgartirmaslik uchun ajratamiz
+  const { _id, ...rest } = user; 
   await usersCollection.updateOne(
     { userId: user.userId },
     { $set: rest },
@@ -309,11 +271,8 @@ async function saveUser(user) {
   );
 }
 
-// Har bir foydalanuvchi uchun bir martalik (faqat 1 kishi kira oladigan)
-// yopiq guruh havolasi yaratadi. Bot guruhda admin bo'lishi shart.
 async function createOneTimeGroupLink(ctx, userId) {
   if (!GROUP_CHAT_ID) {
-    console.error('❌ GROUP_CHAT_ID .env faylida sozlanmagan!');
     return null;
   }
   try {
@@ -323,18 +282,11 @@ async function createOneTimeGroupLink(ctx, userId) {
     });
     return invite.invite_link;
   } catch (e) {
-    console.error("Bir martalik havola yaratib bo'lmadi:", e.message);
     return null;
   }
 }
 
 // ---------------------- BOT ----------------------
-// keepAlive + uzunroq timeout — ba'zi hostinglarda (masalan Render) rasm
-// kabi kattaroq fayllarni yuborayotganda vaqti-vaqti bilan chiqadigan
-// "socket hang up" xatoligini kamaytirish uchun. family: 4 — IPv6 orqali
-// osilib qolishning oldini olish uchun IPv4'ni majburlaydi. (Eslatma:
-// rasm yuborish endi bu agentdan mustaqil, alohida klassik https orqali
-// amalga oshadi — yuqoridagi sendPhotoRaw funksiyasiga qarang.)
 const telegramAgent = new https.Agent({ keepAlive: true, timeout: 60000, family: 4 });
 
 const bot = new Telegraf(BOT_TOKEN, {
@@ -342,14 +294,12 @@ const bot = new Telegraf(BOT_TOKEN, {
   handlerTimeout: 90_000,
 });
 
-// Har bir kanalda a'zolikni tekshirish
 async function isMemberOfChannel(ctx, chatId, userId) {
   try {
     const member = await ctx.telegram.getChatMember(chatId, userId);
     return ['member', 'administrator', 'creator'].includes(member.status);
   } catch (e) {
-    console.error('getChatMember xatolik (' + chatId + '), bot admin emasmi?:', e.message);
-    return false; // xatolik bo'lsa xavfsizlik uchun "a'zo emas" deb hisoblanadi
+    return false;
   }
 }
 
@@ -361,7 +311,6 @@ async function isSubscribedToAll(ctx, userId) {
   return true;
 }
 
-// Obuna klaviaturasi — Bot API 9.4: style (rang) + icon_custom_emoji_id
 function buildSubscribeKeyboard() {
   const rows = CHANNELS.map((ch) => [
     {
@@ -398,22 +347,19 @@ function subscribeMessageText() {
   );
 }
 
-// Premium custom emojilar (foydalanuvchi tomonidan berilgan ID'lar).
-// Bot API 9.4 talab qiladigan tarzda <tg-emoji emoji-id="..."> orqali
-// HTML parse_mode bilan yuboriladi.
 const REF_EMOJI = {
-  party: '5461151367559141950',   // 🎉
-  check: '5206607081334906820',   // ✅
-  star: '5247133031235329609',    // 🌟
-  rocket: '5145427681680032825',  // 🚀
-  boom: '5406683434124859552',    // 💥
-  target: '5364040533498932357',  // 🎯
-  fire: '5224607267797606837',    // 🔥
-  sparkles: '5325547803936572038',// ✨
-  exclaim: '5447644880824181073', // ❗️
-  down: '5406745015365943482',    // 👇
-  paperclip: '5271604874419647061', // 📎
-  people: '5319106456799158575',  // 👥
+  party: '5461151367559141950',   
+  check: '5206607081334906820',   
+  star: '5247133031235329609',    
+  rocket: '5145427681680032825',  
+  boom: '5406683434124859552',    
+  target: '5364040533498932357',  
+  fire: '5224607267797606837',    
+  sparkles: '5325547803936572038',
+  exclaim: '5447644880824181073', 
+  down: '5406745015365943482',    
+  paperclip: '5271604874419647061', 
+  people: '5319106456799158575',  
 };
 
 function tgEmoji(key, emoji) {
@@ -421,9 +367,6 @@ function tgEmoji(key, emoji) {
   return id ? '<tg-emoji emoji-id="' + id + '">' + emoji + '</tg-emoji>' : emoji;
 }
 
-// "Havolani olish" tugmasi — intro xabari ostida chiqadi, bosilganda
-// referal havola xabari (statistika bilan) yuboriladi. style ko'rsatilmasa
-// tugma shaffof (standart kulrang) bo'lib chiqadi.
 const GET_LINK_BUTTON_TEXT = 'Havolani olish';
 const GET_LINK_CALLBACK = 'get_ref_link';
 const GET_LINK_EMOJI_ID = '5271604874419647061';
@@ -489,8 +432,6 @@ async function sendReferralLinkInfo(ctx, userId) {
   await sendStyled(ctx, 'referal-havolangiz.jpg', infoText);
 }
 
-// Har bir qism alohida xabar sifatida yuboriladi (kelajakda har biriga
-// alohida rasm biriktirish uchun ham shu tarzda qulay).
 async function sendReferralInfo(ctx, userId) {
   await sendReferralIntro(ctx, userId);
 }
@@ -524,17 +465,9 @@ async function creditReferrerIfNeeded(ctx, user, userId) {
           '</i></b></blockquote>',
           { parse_mode: 'HTML' }
         );
-      } else {
-        await ctx.telegram.sendMessage(
-          user.invitedBy,
-          '🎉 Tabriklaymiz! Siz ' + REQUIRED_REFERRALS + " ta do'stingizni taklif qildingiz, " +
-          "lekin guruh havolasini yaratishda texnik xatolik yuz berdi. Administrator bilan bog'laning."
-        );
-      }
+      } 
     }
-  } catch (e) {
-    console.error("Referrerga xabar yuborib bo'lmadi:", e.message);
-  }
+  } catch (e) {}
 }
 
 // ---------------------- HANDLERLAR ----------------------
@@ -543,7 +476,6 @@ bot.start(async (ctx) => {
   const userId = ctx.from.id;
   const user = await getUser(userId);
 
-  // Referal parametrini o'qish: /start <referrerId>
   const payload = ctx.startPayload;
   if (payload && /^\d+$/.test(payload)) {
     const referrerId = payload;
@@ -573,13 +505,25 @@ bot.start(async (ctx) => {
 
 
 // ==========================================
-// YANGI: BARCHA A'ZOLARGA XABAR YUBORISH (BACKGROUND TASK)
+// YANGI: BARCHA A'ZOLARGA XABAR YUBORISH (STOP TUGMASI BILAN)
 // ==========================================
+
+// Global o'zgaruvchi: Xabar tarqatish holatini nazorat qilish uchun
+const broadcastState = {
+  isActive: false,
+  shouldStop: false,
+};
+
 bot.command('sendall', async (ctx) => {
   const userId = String(ctx.from.id);
   
   if (!ADMIN_IDS.includes(userId)) {
     return;
+  }
+
+  // Agar allaqachon jarayon ketayotgan bo'lsa
+  if (broadcastState.isActive) {
+    return ctx.reply("⚠️ Ayni paytda boshqa xabar tarqatish jarayoni ketmoqda. Iltimos, u tugashini kuting yoki uni to'xtating.");
   }
 
   const replyTo = ctx.message.reply_to_message;
@@ -590,16 +534,33 @@ bot.command('sendall', async (ctx) => {
   const users = await usersCollection.find({}).toArray();
   const totalUsers = users.length;
 
-  // Telegram uzib qo'ymasligi uchun darhol javob beramiz
-  await ctx.reply(`🚀 Barcha ${totalUsers} ta foydalanuvchiga xabar yuborish boshlandi...\n\nBu jarayon orqa fonda (background) ishlaydi. Botdan bemalol foydalanavering, tarqatib bo'lgach bot o'zi sizga hisobot yuboradi.`);
+  // Jarayonni boshlash
+  broadcastState.isActive = true;
+  broadcastState.shouldStop = false;
 
-  // Xabar tarqatish tsiklini Asinxron IIFE (Mustaqil funksiya) ichida ishga tushiramiz.
-  // Bu kod asosiy oqimni ushlab turmaydi va Telegram qayta urinishlarini to'xtatadi.
+  const statusMsg = await ctx.reply(
+    `🚀 Barcha ${totalUsers} ta foydalanuvchiga xabar yuborish boshlandi...\n\nBu jarayon orqa fonda ishlaydi. Istalgan vaqtda to'xtatishingiz mumkin.`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🛑 To\'xtatish', callback_data: 'stop_broadcast' }]
+        ]
+      }
+    }
+  );
+
   (async () => {
     let successCount = 0;
     let failCount = 0;
+    let isStoppedByUser = false;
 
     for (const user of users) {
+      // Agar admin to'xtatish tugmasini bosgan bo'lsa, siklni uzamiz
+      if (broadcastState.shouldStop) {
+        isStoppedByUser = true;
+        break;
+      }
+
       try {
         await ctx.telegram.copyMessage(user.userId, ctx.chat.id, replyTo.message_id);
         successCount++;
@@ -607,20 +568,49 @@ bot.command('sendall', async (ctx) => {
         failCount++;
       }
       
-      // Limitga tushmaslik uchun 50ms kutish (sekundiga taxminan 20 ta xabar)
       await delay(50);
     }
 
-    // Jarayon to'liq tugagach, admin ga natijani yuborish
+    // Sikl tugadi (yoki to'xtatildi)
+    broadcastState.isActive = false;
+    broadcastState.shouldStop = false;
+
     try {
+      // To'xtatish tugmasini o'chirib tashlaymiz
+      await ctx.telegram.editMessageReplyMarkup(ctx.chat.id, statusMsg.message_id, undefined, { inline_keyboard: [] });
+
+      const finalStatusText = isStoppedByUser 
+        ? "🛑 Xabar tarqatish jarayoni TO'XTATILDI!\n\n" 
+        : "✅ Xabar tarqatish to'liq YAKUNLANDI!\n\n";
+
       await ctx.telegram.sendMessage(
         ctx.chat.id,
-        `✅ Xabar tarqatish to'liq yakunlandi!\n\n📈 Statistika:\n👥 Jami urinishlar: ${totalUsers} ta\n✅ Yetib bordi: ${successCount} ta\n❌ Bloklagan yoki o'chirilgan: ${failCount} ta`
+        finalStatusText + `📈 Statistika:\n👥 Jami urinishlar: ${isStoppedByUser ? (successCount+failCount) : totalUsers} ta\n✅ Yetib bordi: ${successCount} ta\n❌ Bloklagan yoki o'chirilgan: ${failCount} ta`
       );
     } catch (e) {
       console.error("Adminga hisobot yuborib bo'lmadi:", e.message);
     }
   })();
+});
+
+// To'xtatish tugmasi bosilganda ishlaydigan harakat
+bot.action('stop_broadcast', async (ctx) => {
+  const userId = String(ctx.from.id);
+  
+  if (!ADMIN_IDS.includes(userId)) {
+    return;
+  }
+
+  if (!broadcastState.isActive) {
+    return ctx.answerCbQuery("Tizimda hech qanday xabar tarqatish jarayoni ketmayapti.", { show_alert: true });
+  }
+
+  broadcastState.shouldStop = true;
+  await ctx.answerCbQuery("To'xtatilmoqda...", { show_alert: false });
+  
+  try {
+    await ctx.editMessageText("🛑 Xabar tarqatish to'xtatilmoqda, iltimos hisobot kelishini kuting...");
+  } catch(e) {}
 });
 // ==========================================
 
@@ -649,9 +639,7 @@ bot.action('check_sub', async (ctx) => {
 
   try {
     await ctx.editMessageReplyMarkup(undefined);
-  } catch (e) {
-    // e'tiborsiz qoldiramiz
-  }
+  } catch (e) {}
 
   await sendReferralInfo(ctx, userId);
 });
@@ -662,10 +650,7 @@ bot.action(GET_LINK_CALLBACK, async (ctx) => {
 
   try {
     await ctx.deleteMessage();
-  } catch (e) {
-    console.error("Intro xabarini o'chirib bo'lmadi:", e.message);
-    // O'chirib bo'lmasa ham (masalan 48 soatdan o'tgan bo'lsa), davom etamiz
-  }
+  } catch (e) {}
 
   await sendReferralLinkInfo(ctx, userId);
 });
@@ -687,7 +672,6 @@ async function main() {
   await connectDB();
 
   if (WEBHOOK_URL) {
-    // Render (production) — webhook rejimi
     const app = express();
     app.use(express.json());
 
@@ -702,7 +686,6 @@ async function main() {
       console.log('✅ Webhook o\'rnatildi: ' + WEBHOOK_URL + secretPath);
     });
   } else {
-    // Lokal rejim — polling
     await bot.launch();
     console.log('✅ MS Haydarov bot polling rejimida ishga tushdi (lokal)');
   }
