@@ -221,12 +221,6 @@ const CHANNELS = [
 const CONFIRM_STYLE = 'danger'; 
 const CONFIRM_EMOJI_ID = process.env.EMOJI_RED_ID || '5273805757396031980';
 
-const INSTAGRAM_LINK = process.env.INSTAGRAM_LINK ||
-  'https://www.instagram.com/matematika_ms_?igsh=d2Q0czZscGprMXZ5';
-const INSTAGRAM_LABEL = '📸 Instagram sahifamiz';
-const INSTAGRAM_STYLE = 'danger'; 
-const INSTAGRAM_EMOJI_ID = process.env.EMOJI_INSTAGRAM_ID || '5226905513387631634';
-
 const REQUIRED_REFERRALS = parseInt(process.env.REQUIRED_REFERRALS || '5', 10);
 const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID;
 
@@ -322,14 +316,6 @@ function buildSubscribeKeyboard() {
   ]);
   rows.push([
     {
-      text: INSTAGRAM_LABEL,
-      url: INSTAGRAM_LINK,
-      style: INSTAGRAM_STYLE,
-      icon_custom_emoji_id: INSTAGRAM_EMOJI_ID,
-    },
-  ]);
-  rows.push([
-    {
       text: 'Tasdiqlash',
       callback_data: 'check_sub',
       style: CONFIRM_STYLE,
@@ -342,7 +328,7 @@ function buildSubscribeKeyboard() {
 function subscribeMessageText() {
   return (
     "Assalomu alaykum! 👋\n\n" +
-    "Botdan foydalanish uchun quyidagi kanallarga va Instagram sahifamizga " +
+    "Botdan foydalanish uchun quyidagi kanallarga " +
     "obuna bo'ling, so'ng \"Tasdiqlash\" tugmasini bosing:"
   );
 }
